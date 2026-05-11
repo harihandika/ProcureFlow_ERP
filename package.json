@@ -1,0 +1,17 @@
+{
+  "name": "procureflow-erp",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "api:dev": "npm run start:dev -w @procureflow/api",
+    "api:build": "npm run build -w @procureflow/api",
+    "api:test": "npm run test -w @procureflow/api",
+    "api:test:e2e": "npm run test:e2e -w @procureflow/api",
+    "prisma:generate": "npm run prisma:generate -w @procureflow/api",
+    "prisma:migrate": "npm run prisma:migrate -w @procureflow/api",
+    "prisma:seed": "npm run prisma:seed -w @procureflow/api"
+  }
+}
