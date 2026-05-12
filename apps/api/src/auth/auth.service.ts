@@ -1,8 +1,9 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { UserStatus } from '@prisma/client';
+import { AuditAction, AuditEntityType, UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { LoginDto } from './dto/login.dto';
+import { AuditTrailsService } from '../audit-trails/audit-trails.service';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,6 +18,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly auditTrailsService: AuditTrailsService,
   ) {}
 
   async login(dto: LoginDto, context?: LoginContext) {
@@ -53,6 +55,17 @@ export class AuthService {
     await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
+    });
+
+    await this.auditTrailsService.record({
+      action: AuditAction.LOGIN,
+      entityType: AuditEntityType.USER,
+      entityId: user.id,
+      entityLabel: user.email,
+      actorId: user.id,
+      metadata: { roles },
+      ipAddress: context?.ipAddress,
+      userAgent: context?.userAgent,
     });
 
     return {

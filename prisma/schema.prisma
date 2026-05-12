@@ -14,6 +14,97 @@ enum UserStatus {
   DISABLED
 }
 
+enum BudgetStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+
+enum BudgetTransactionType {
+  ALLOCATION
+  ADJUSTMENT
+  RESERVATION
+  RELEASE
+  COMMITMENT
+  CONSUMPTION
+  REVERSAL
+}
+
+enum BudgetTransactionStatus {
+  PENDING
+  POSTED
+  VOID
+}
+
+enum PurchaseRequestStatus {
+  DRAFT
+  SUBMITTED
+  CANCELLED
+}
+
+enum PurchaseRequestPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum ReceivingStatus {
+  PARTIAL
+  FULL
+  CANCELLED
+}
+
+enum ErpSyncOperation {
+  CREATE_PO
+  UPDATE_PO
+  CANCEL_PO
+}
+
+enum ErpSyncStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  RETRYING
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  SUBMIT
+  RECEIVE
+  SYNC_ERP
+  RETRY_ERP_SYNC
+}
+
+enum AuditEntityType {
+  USER
+  ROLE
+  DEPARTMENT
+  ITEM
+  SUPPLIER
+  WAREHOUSE
+  PACKAGING_UNIT
+  BUDGET
+  BUDGET_TRANSACTION
+  PURCHASE_REQUEST
+  PURCHASE_ORDER
+  RECEIVING
+  ERP_SYNC_LOG
+  SYSTEM
+}
+
 model User {
   id           String     @id @default(uuid()) @db.Uuid
   email        String     @unique @db.VarChar(255)
@@ -31,6 +122,14 @@ model User {
   roleAssignments         UserRole[]   @relation("UserRoleAssignments")
   assignedRoleAssignments UserRole[]   @relation("RoleAssignedBy")
   managedDepartments      Department[] @relation("DepartmentManager")
+  createdBudgets          Budget[]     @relation("BudgetCreatedBy")
+  approvedBudgets         Budget[]     @relation("BudgetApprovedBy")
+  budgetTransactions      BudgetTransaction[] @relation("BudgetTransactionCreatedBy")
+  purchaseRequests        PurchaseRequest[] @relation("PurchaseRequestRequester")
+  createdOrders           PurchaseOrder[] @relation("PurchaseOrderCreatedBy")
+  receivedGoods           Receiving[] @relation("ReceivingReceivedBy")
+  erpSyncLogs             ErpSyncLog[] @relation("ErpSyncTriggeredBy")
+  auditTrails             AuditTrail[] @relation("AuditActor")
 
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @db.Timestamptz(6)
@@ -88,7 +187,9 @@ model Department {
   parent   Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
   children Department[] @relation("DepartmentHierarchy")
 
-  users User[]
+  users            User[]
+  budgets          Budget[]
+  purchaseRequests PurchaseRequest[]
 
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @db.Timestamptz(6)
@@ -98,4 +199,438 @@ model Department {
   @@index([parentId])
   @@index([isActive])
   @@index([deletedAt])
+}
+
+model PackagingUnit {
+  id          String  @id @default(uuid()) @db.Uuid
+  code        String  @unique @db.VarChar(40)
+  name        String  @db.VarChar(120)
+  description String? @db.VarChar(255)
+  isActive    Boolean @default(true)
+
+  items                Item[]
+  purchaseRequestItems PurchaseRequestItem[]
+  purchaseOrderItems   PurchaseOrderItem[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([isActive])
+  @@index([deletedAt])
+}
+
+model Supplier {
+  id           String  @id @default(uuid()) @db.Uuid
+  code         String  @unique @db.VarChar(40)
+  name         String  @db.VarChar(180)
+  contactName  String? @db.VarChar(160)
+  email        String? @db.VarChar(255)
+  phone        String? @db.VarChar(40)
+  taxNumber    String? @db.VarChar(80)
+  addressLine1 String? @db.VarChar(255)
+  addressLine2 String? @db.VarChar(255)
+  city         String? @db.VarChar(120)
+  country      String? @db.VarChar(120)
+  paymentTerms String? @db.VarChar(120)
+  isActive     Boolean @default(true)
+
+  defaultItems Item[]
+  purchaseOrders PurchaseOrder[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([name])
+  @@index([isActive])
+  @@index([deletedAt])
+}
+
+model Warehouse {
+  id          String  @id @default(uuid()) @db.Uuid
+  code        String  @unique @db.VarChar(40)
+  name        String  @db.VarChar(160)
+  description String? @db.VarChar(500)
+  address     String? @db.VarChar(500)
+  isActive    Boolean @default(true)
+
+  purchaseOrders PurchaseOrder[]
+  receivings      Receiving[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([isActive])
+  @@index([deletedAt])
+}
+
+model Item {
+  id          String  @id @default(uuid()) @db.Uuid
+  sku         String  @unique @db.VarChar(80)
+  name        String  @db.VarChar(180)
+  description String? @db.VarChar(800)
+  category    String? @db.VarChar(120)
+  brand       String? @db.VarChar(120)
+  isActive    Boolean @default(true)
+
+  estimatedUnitPrice Decimal @default(0) @db.Decimal(18, 2)
+
+  defaultPackagingUnitId String?        @db.Uuid
+  defaultPackagingUnit   PackagingUnit? @relation(fields: [defaultPackagingUnitId], references: [id], onDelete: SetNull)
+
+  defaultSupplierId String?   @db.Uuid
+  defaultSupplier   Supplier? @relation(fields: [defaultSupplierId], references: [id], onDelete: SetNull)
+
+  purchaseRequestItems PurchaseRequestItem[]
+  purchaseOrderItems   PurchaseOrderItem[]
+  receivingItems       ReceivingItem[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([category])
+  @@index([defaultPackagingUnitId])
+  @@index([defaultSupplierId])
+  @@index([isActive])
+  @@index([deletedAt])
+}
+
+model Budget {
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String       @unique @db.VarChar(60)
+  name        String       @db.VarChar(180)
+  fiscalYear  Int
+  period      String?      @db.VarChar(20)
+  currency    String       @default("IDR") @db.Char(3)
+  status      BudgetStatus @default(DRAFT)
+  description String?      @db.VarChar(500)
+
+  allocatedAmount Decimal @default(0) @db.Decimal(18, 2)
+  reservedAmount  Decimal @default(0) @db.Decimal(18, 2)
+  committedAmount Decimal @default(0) @db.Decimal(18, 2)
+  consumedAmount  Decimal @default(0) @db.Decimal(18, 2)
+
+  departmentId String     @db.Uuid
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+
+  createdById String? @db.Uuid
+  createdBy   User?   @relation("BudgetCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  approvedById String?   @db.Uuid
+  approvedBy   User?     @relation("BudgetApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt   DateTime? @db.Timestamptz(6)
+
+  transactions BudgetTransaction[]
+  purchaseRequests PurchaseRequest[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@unique([departmentId, fiscalYear, period])
+  @@index([departmentId])
+  @@index([fiscalYear])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model BudgetTransaction {
+  id            String                  @id @default(uuid()) @db.Uuid
+  transactionNo String                  @unique @db.VarChar(80)
+  type          BudgetTransactionType
+  status        BudgetTransactionStatus @default(POSTED)
+  amount        Decimal                 @db.Decimal(18, 2)
+  currency      String                  @default("IDR") @db.Char(3)
+  description   String?                 @db.VarChar(500)
+  occurredAt    DateTime                @default(now()) @db.Timestamptz(6)
+
+  budgetId String @db.Uuid
+  budget   Budget @relation(fields: [budgetId], references: [id], onDelete: Restrict)
+
+  purchaseRequestId String?          @db.Uuid
+  purchaseRequest   PurchaseRequest? @relation(fields: [purchaseRequestId], references: [id], onDelete: SetNull)
+
+  createdById String? @db.Uuid
+  createdBy   User?   @relation("BudgetTransactionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([budgetId])
+  @@index([purchaseRequestId])
+  @@index([createdById])
+  @@index([type])
+  @@index([status])
+  @@index([occurredAt])
+}
+
+model PurchaseRequest {
+  id            String                  @id @default(uuid()) @db.Uuid
+  requestNumber String                  @unique @db.VarChar(80)
+  title         String                  @db.VarChar(180)
+  description   String?                 @db.VarChar(1000)
+  status        PurchaseRequestStatus   @default(DRAFT)
+  priority      PurchaseRequestPriority @default(NORMAL)
+  requiredDate  DateTime?               @db.Date
+  submittedAt   DateTime?               @db.Timestamptz(6)
+  cancelledAt   DateTime?               @db.Timestamptz(6)
+  totalAmount   Decimal                 @default(0) @db.Decimal(18, 2)
+  currency      String                  @default("IDR") @db.Char(3)
+
+  requesterId String @db.Uuid
+  requester   User   @relation("PurchaseRequestRequester", fields: [requesterId], references: [id], onDelete: Restrict)
+
+  departmentId String     @db.Uuid
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+
+  budgetId String? @db.Uuid
+  budget   Budget? @relation(fields: [budgetId], references: [id], onDelete: SetNull)
+
+  items              PurchaseRequestItem[]
+  budgetTransactions BudgetTransaction[]
+  purchaseOrders     PurchaseOrder[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([requesterId])
+  @@index([departmentId])
+  @@index([budgetId])
+  @@index([status])
+  @@index([priority])
+  @@index([submittedAt])
+  @@index([deletedAt])
+}
+
+model PurchaseRequestItem {
+  id          String  @id @default(uuid()) @db.Uuid
+  description String? @db.VarChar(500)
+  notes       String? @db.VarChar(500)
+
+  quantity           Decimal @db.Decimal(18, 4)
+  estimatedUnitPrice Decimal @db.Decimal(18, 2)
+  lineTotal          Decimal @db.Decimal(18, 2)
+
+  itemSkuSnapshot  String @db.VarChar(80)
+  itemNameSnapshot String @db.VarChar(180)
+  unitCodeSnapshot String @db.VarChar(40)
+  unitNameSnapshot String @db.VarChar(120)
+
+  purchaseRequestId String          @db.Uuid
+  purchaseRequest   PurchaseRequest @relation(fields: [purchaseRequestId], references: [id], onDelete: Cascade)
+
+  itemId String @db.Uuid
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  packagingUnitId String        @db.Uuid
+  packagingUnit   PackagingUnit @relation(fields: [packagingUnitId], references: [id], onDelete: Restrict)
+
+  purchaseOrderItems PurchaseOrderItem[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([purchaseRequestId])
+  @@index([itemId])
+  @@index([packagingUnitId])
+}
+
+model PurchaseOrder {
+  id                   String              @id @default(uuid()) @db.Uuid
+  poNumber             String              @unique @db.VarChar(80)
+  status               PurchaseOrderStatus @default(DRAFT)
+  issueDate            DateTime?           @db.Date
+  expectedDeliveryDate DateTime?           @db.Date
+  totalAmount          Decimal             @default(0) @db.Decimal(18, 2)
+  currency             String              @default("IDR") @db.Char(3)
+  erpExternalId        String?             @db.VarChar(120)
+  syncedAt             DateTime?           @db.Timestamptz(6)
+  notes                String?             @db.VarChar(1000)
+
+  purchaseRequestId String?          @db.Uuid
+  purchaseRequest   PurchaseRequest? @relation(fields: [purchaseRequestId], references: [id], onDelete: SetNull)
+
+  supplierId String   @db.Uuid
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  warehouseId String    @db.Uuid
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+
+  createdById String? @db.Uuid
+  createdBy   User?   @relation("PurchaseOrderCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  items      PurchaseOrderItem[]
+  receivings Receiving[]
+  erpSyncLogs ErpSyncLog[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([purchaseRequestId])
+  @@index([supplierId])
+  @@index([warehouseId])
+  @@index([createdById])
+  @@index([status])
+  @@index([issueDate])
+  @@index([erpExternalId])
+  @@index([deletedAt])
+}
+
+model PurchaseOrderItem {
+  id          String  @id @default(uuid()) @db.Uuid
+  description String? @db.VarChar(500)
+
+  quantityOrdered  Decimal @db.Decimal(18, 4)
+  quantityReceived Decimal @default(0) @db.Decimal(18, 4)
+  unitPrice        Decimal @db.Decimal(18, 2)
+  lineTotal        Decimal @db.Decimal(18, 2)
+
+  itemSkuSnapshot  String @db.VarChar(80)
+  itemNameSnapshot String @db.VarChar(180)
+  unitCodeSnapshot String @db.VarChar(40)
+  unitNameSnapshot String @db.VarChar(120)
+
+  purchaseOrderId String        @db.Uuid
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  purchaseRequestItemId String?              @db.Uuid
+  purchaseRequestItem   PurchaseRequestItem? @relation(fields: [purchaseRequestItemId], references: [id], onDelete: SetNull)
+
+  itemId String @db.Uuid
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  packagingUnitId String        @db.Uuid
+  packagingUnit   PackagingUnit @relation(fields: [packagingUnitId], references: [id], onDelete: Restrict)
+
+  receivingItems ReceivingItem[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([purchaseOrderId])
+  @@index([purchaseRequestItemId])
+  @@index([itemId])
+  @@index([packagingUnitId])
+}
+
+model Receiving {
+  id              String          @id @default(uuid()) @db.Uuid
+  receivingNumber String          @unique @db.VarChar(80)
+  status          ReceivingStatus @default(PARTIAL)
+  receivedAt      DateTime        @default(now()) @db.Timestamptz(6)
+  deliveryNoteNo  String?         @db.VarChar(120)
+  remarks         String?         @db.VarChar(1000)
+
+  purchaseOrderId String        @db.Uuid
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+
+  warehouseId String    @db.Uuid
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+
+  receivedById String? @db.Uuid
+  receivedBy   User?   @relation("ReceivingReceivedBy", fields: [receivedById], references: [id], onDelete: SetNull)
+
+  items ReceivingItem[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([purchaseOrderId])
+  @@index([warehouseId])
+  @@index([receivedById])
+  @@index([status])
+  @@index([receivedAt])
+  @@index([deletedAt])
+}
+
+model ReceivingItem {
+  id               String  @id @default(uuid()) @db.Uuid
+  scannedCode      String? @db.VarChar(120)
+  quantityReceived Decimal @db.Decimal(18, 4)
+  quantityAccepted Decimal @default(0) @db.Decimal(18, 4)
+  quantityRejected Decimal @default(0) @db.Decimal(18, 4)
+  remarks          String? @db.VarChar(500)
+
+  receivingId String    @db.Uuid
+  receiving   Receiving @relation(fields: [receivingId], references: [id], onDelete: Cascade)
+
+  purchaseOrderItemId String            @db.Uuid
+  purchaseOrderItem   PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id], onDelete: Restrict)
+
+  itemId String @db.Uuid
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([receivingId])
+  @@index([purchaseOrderItemId])
+  @@index([itemId])
+  @@index([scannedCode])
+}
+
+model ErpSyncLog {
+  id              String           @id @default(uuid()) @db.Uuid
+  operation       ErpSyncOperation
+  status          ErpSyncStatus    @default(PENDING)
+  attemptNo       Int              @default(1)
+  maxAttempts     Int              @default(3)
+  externalId      String?          @db.VarChar(120)
+  requestPayload  Json?
+  responsePayload Json?
+  errorMessage    String?          @db.Text
+  syncedAt        DateTime?        @db.Timestamptz(6)
+  nextRetryAt     DateTime?        @db.Timestamptz(6)
+
+  purchaseOrderId String        @db.Uuid
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  triggeredById String? @db.Uuid
+  triggeredBy   User?   @relation("ErpSyncTriggeredBy", fields: [triggeredById], references: [id], onDelete: SetNull)
+
+  previousSyncLogId String?      @db.Uuid
+  previousSyncLog   ErpSyncLog?  @relation("ErpSyncRetryChain", fields: [previousSyncLogId], references: [id], onDelete: SetNull)
+  retryLogs         ErpSyncLog[] @relation("ErpSyncRetryChain")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([purchaseOrderId])
+  @@index([triggeredById])
+  @@index([previousSyncLogId])
+  @@index([operation])
+  @@index([status])
+  @@index([nextRetryAt])
+  @@index([createdAt])
+}
+
+model AuditTrail {
+  id          String          @id @default(uuid()) @db.Uuid
+  action      AuditAction
+  entityType  AuditEntityType
+  entityId    String?         @db.Uuid
+  entityLabel String?         @db.VarChar(180)
+  before      Json?
+  after       Json?
+  metadata    Json?
+  ipAddress   String?         @db.VarChar(80)
+  userAgent   String?         @db.VarChar(500)
+
+  actorId String? @db.Uuid
+  actor   User?   @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([actorId])
+  @@index([action])
+  @@index([entityType])
+  @@index([entityType, entityId])
+  @@index([createdAt])
 }

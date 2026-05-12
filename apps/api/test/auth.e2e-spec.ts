@@ -13,6 +13,9 @@ describe('AuthController (e2e)', () => {
       findFirst: jest.fn(),
       update: jest.fn(),
     },
+    auditTrail: {
+      create: jest.fn(),
+    },
     $connect: jest.fn(),
     $disconnect: jest.fn(),
   };
@@ -31,6 +34,7 @@ describe('AuthController (e2e)', () => {
       roleAssignments: [{ role: { name: 'ADMIN' } }],
     });
     prismaMock.user.update.mockResolvedValue({});
+    prismaMock.auditTrail.create.mockResolvedValue({});
 
     const moduleFixture = await Test.createTestingModule({
       imports: [AppModule],

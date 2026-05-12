@@ -13,6 +13,9 @@ describe('AuthService', () => {
   const jwtService = {
     signAsync: jest.fn(),
   };
+  const auditTrailsService = {
+    record: jest.fn(),
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -32,16 +35,31 @@ describe('AuthService', () => {
     prisma.user.update.mockResolvedValue({});
     jwtService.signAsync.mockResolvedValue('signed.jwt.token');
 
-    const service = new AuthService(prisma as never, jwtService as unknown as JwtService);
+    const service = new AuthService(
+      prisma as never,
+      jwtService as unknown as JwtService,
+      auditTrailsService as never,
+    );
     const result = await service.login({ email: 'admin@procureflow.test', password: 'Password123!' });
 
     expect(result.accessToken).toBe('signed.jwt.token');
     expect(result.user.roles).toEqual(['ADMIN']);
+    expect(auditTrailsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'LOGIN',
+        entityType: 'USER',
+        entityId: 'user-id',
+      }),
+    );
   });
 
   it('rejects invalid credentials', async () => {
     prisma.user.findFirst.mockResolvedValue(null);
-    const service = new AuthService(prisma as never, jwtService as unknown as JwtService);
+    const service = new AuthService(
+      prisma as never,
+      jwtService as unknown as JwtService,
+      auditTrailsService as never,
+    );
 
     await expect(service.login({ email: 'missing@procureflow.test', password: 'Password123!' })).rejects.toThrow(
       'Invalid email or password.',
