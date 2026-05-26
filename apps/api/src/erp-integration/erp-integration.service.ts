@@ -33,7 +33,8 @@ export class ErpIntegrationService {
     private readonly auditTrailsService: AuditTrailsService,
   ) {}
 
-  async syncPurchaseOrder(purchaseOrderId: string, dto: SyncPurchaseOrderDto, user: AuthenticatedUser) {
+  async syncPurchaseOrder(purchaseOrderId: string, dto: SyncPurchaseOrderDto | undefined, user: AuthenticatedUser) {
+    dto ??= {};
     this.validateSimulatedStatus(dto.simulateStatus);
     const purchaseOrder = await this.findSyncablePurchaseOrder(purchaseOrderId);
     const attemptNo = await this.getNextAttemptNo(purchaseOrderId, ErpSyncOperation.CREATE_PO);
@@ -89,7 +90,8 @@ export class ErpIntegrationService {
     return syncLog;
   }
 
-  async retryFailedSync(syncLogId: string, dto: SyncPurchaseOrderDto, user: AuthenticatedUser) {
+  async retryFailedSync(syncLogId: string, dto: SyncPurchaseOrderDto | undefined, user: AuthenticatedUser) {
+    dto ??= {};
     this.validateSimulatedStatus(dto.simulateStatus);
     const failedLog = await this.prisma.erpSyncLog.findUnique({
       where: { id: syncLogId },

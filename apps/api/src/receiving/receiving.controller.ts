@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CreateReceivingDto } from './dto/create-receiving.dto';
+import { ReceivingQueryDto } from './dto/receiving-query.dto';
 import { ReceivingService } from './receiving.service';
 import { AppRole } from '../common/constants/roles';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -9,8 +10,8 @@ import { AuthenticatedUser } from '../common/interfaces/authenticated-user.inter
 
 @ApiTags('Receiving')
 @ApiBearerAuth()
-@Roles(AppRole.Admin, AppRole.Warehouse)
-@Controller('receivings')
+@Roles(AppRole.Admin, AppRole.Warehouse, AppRole.Purchasing)
+@Controller('receiving')
 export class ReceivingController {
   constructor(private readonly receivingService: ReceivingService) {}
 
@@ -20,15 +21,21 @@ export class ReceivingController {
     return this.receivingService.receive(dto, user);
   }
 
-  @Get(':id')
-  @ApiOperation({ summary: 'Get receiving detail. Admin or Warehouse only.' })
-  findOne(@Param('id') id: string) {
-    return this.receivingService.findOne(id);
+  @Get()
+  @ApiOperation({ summary: 'List receiving records with pagination and filters. Admin or Warehouse only.' })
+  findAll(@Query() query: ReceivingQueryDto) {
+    return this.receivingService.findAll(query);
   }
 
   @Get('purchase-orders/:purchaseOrderId')
   @ApiOperation({ summary: 'List receiving records for a purchase order. Admin or Warehouse only.' })
   findByPurchaseOrder(@Param('purchaseOrderId') purchaseOrderId: string) {
     return this.receivingService.findByPurchaseOrder(purchaseOrderId);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get receiving detail. Admin or Warehouse only.' })
+  findOne(@Param('id') id: string) {
+    return this.receivingService.findOne(id);
   }
 }

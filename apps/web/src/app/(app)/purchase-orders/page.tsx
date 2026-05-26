@@ -1,15 +1,30 @@
+'use client';
+
 import Link from 'next/link';
-import { ArrowUpRight, Plus, ShoppingCart } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { ArrowUpRight, Loader2, Plus, ShoppingCart } from 'lucide-react';
 import { ErpSyncStatusBadge, POStatusBadge } from '@/components/purchase-orders/purchase-order-badges';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { getPurchaseOrderTotal, purchaseOrders } from '@/lib/purchase-order-data';
+import { getApiErrorMessage } from '@/lib/api-error';
+import {
+  fetchPurchaseOrders,
+  getErpSyncStatusLabel,
+  getPurchaseOrderStatusLabel,
+  type PurchaseOrder,
+} from '@/lib/purchase-order-api';
 import { formatCurrency } from '@/lib/utils';
 
 export default function PurchaseOrdersPage() {
-  const issuedCount = purchaseOrders.filter((order) => order.status === 'Issued' || order.status === 'Sent').length;
-  const erpFailedCount = purchaseOrders.filter((order) => order.erpSyncStatus === 'Failed').length;
+  const purchaseOrdersQuery = useQuery({
+    queryKey: ['purchase-orders', 'list', { page: 1, limit: 50 }],
+    queryFn: () => fetchPurchaseOrders({ page: 1, limit: 50 }),
+  });
+
+  const purchaseOrders = purchaseOrdersQuery.data?.data ?? [];
+  const issuedCount = purchaseOrders.filter((order) => order.status === 'ISSUED').length;
+  const draftCount = purchaseOrders.filter((order) => order.status === 'DRAFT').length;
 
   return (
     <div className="space-y-6">
@@ -17,7 +32,7 @@ export default function PurchaseOrdersPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-normal text-slate-950">Purchase Orders</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Generate purchase orders from approved PRs, send them to suppliers, and simulate ERP synchronization.
+            Generate purchase orders from approved PRs, assign suppliers, and manage PO status.
           </p>
         </div>
         <Button asChild>
@@ -29,16 +44,16 @@ export default function PurchaseOrdersPage() {
       </div>
 
       <section className="grid gap-4 md:grid-cols-3">
-        <SummaryCard label="Total PO" value={String(purchaseOrders.length)} caption="Dummy purchase orders" />
-        <SummaryCard label="Issued or Sent" value={String(issuedCount)} caption="Supplier-facing orders" />
-        <SummaryCard label="ERP Failures" value={String(erpFailedCount)} caption="Need sync retry" />
+        <SummaryCard label="Total PO" value={String(purchaseOrdersQuery.data?.meta.total ?? purchaseOrders.length)} caption="Purchase orders from backend" />
+        <SummaryCard label="Issued" value={String(issuedCount)} caption="Supplier-facing orders" />
+        <SummaryCard label="Draft" value={String(draftCount)} caption="Waiting to be issued" />
       </section>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
             <CardTitle>Purchase Order List</CardTitle>
-            <CardDescription>Current PO documents and ERP sync status.</CardDescription>
+            <CardDescription>Current PO documents and read-only ERP sync status.</CardDescription>
           </div>
           <div className="rounded-md bg-blue-50 p-2 text-blue-800">
             <ShoppingCart className="h-4 w-4" />
@@ -59,36 +74,66 @@ export default function PurchaseOrdersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {purchaseOrders.map((order) => (
-                  <TableRow key={order.id}>
-                    <TableCell>
-                      <div className="font-medium text-slate-900">{order.poNo}</div>
-                      <div className="text-xs text-slate-500">{order.createdAt}</div>
-                    </TableCell>
-                    <TableCell>{order.prNo}</TableCell>
-                    <TableCell>{order.supplierName}</TableCell>
-                    <TableCell>
-                      <POStatusBadge status={order.status} />
-                    </TableCell>
-                    <TableCell>
-                      <ErpSyncStatusBadge status={order.erpSyncStatus} />
-                    </TableCell>
-                    <TableCell className="text-right font-medium">{formatCurrency(getPurchaseOrderTotal(order.items))}</TableCell>
-                    <TableCell className="text-right">
-                      <Button asChild variant="ghost" size="icon" aria-label={`View ${order.poNo}`}>
-                        <Link href={`/purchase-orders/${order.id}`}>
-                          <ArrowUpRight className="h-4 w-4" />
-                        </Link>
-                      </Button>
+                {purchaseOrdersQuery.isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="h-24 text-center text-slate-500">
+                      <span className="inline-flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading purchase orders...
+                      </span>
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : null}
+                {purchaseOrdersQuery.isError ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="h-24 text-center text-red-600">
+                      {getApiErrorMessage(purchaseOrdersQuery.error, 'Unable to load purchase orders.')}
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+                {!purchaseOrdersQuery.isLoading && !purchaseOrdersQuery.isError
+                  ? purchaseOrders.map((order) => <PurchaseOrderRow key={order.id} order={order} />)
+                  : null}
+                {!purchaseOrdersQuery.isLoading && !purchaseOrdersQuery.isError && !purchaseOrders.length ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="h-24 text-center text-slate-500">
+                      No purchase orders have been generated yet.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
               </TableBody>
             </Table>
           </div>
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function PurchaseOrderRow({ order }: { order: PurchaseOrder }) {
+  return (
+    <TableRow>
+      <TableCell>
+        <div className="font-medium text-slate-900">{order.poNumber}</div>
+        <div className="text-xs text-slate-500">{formatDate(order.createdAt)}</div>
+      </TableCell>
+      <TableCell>{order.purchaseRequest?.requestNumber ?? '-'}</TableCell>
+      <TableCell>{order.supplier.name}</TableCell>
+      <TableCell>
+        <POStatusBadge status={getPurchaseOrderStatusLabel(order.status)} />
+      </TableCell>
+      <TableCell>
+        <ErpSyncStatusBadge status={getErpSyncStatusLabel(order.erpSyncStatus)} />
+      </TableCell>
+      <TableCell className="text-right font-medium">{formatCurrency(order.totalAmount)}</TableCell>
+      <TableCell className="text-right">
+        <Button asChild variant="ghost" size="icon" aria-label={`View ${order.poNumber}`}>
+          <Link href={`/purchase-orders/${order.id}`}>
+            <ArrowUpRight className="h-4 w-4" />
+          </Link>
+        </Button>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -104,4 +149,8 @@ function SummaryCard({ label, value, caption }: { label: string; value: string; 
       </CardContent>
     </Card>
   );
+}
+
+function formatDate(value: string) {
+  return value ? value.slice(0, 10) : '-';
 }

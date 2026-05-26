@@ -11,11 +11,11 @@ import { AuthenticatedUser } from '../common/interfaces/authenticated-user.inter
 @ApiTags('ERP Integration')
 @ApiBearerAuth()
 @Roles(AppRole.Admin, AppRole.Purchasing)
-@Controller('erp-integration')
+@Controller('erp-sync')
 export class ErpIntegrationController {
   constructor(private readonly erpIntegrationService: ErpIntegrationService) {}
 
-  @Post('purchase-orders/:purchaseOrderId/sync')
+  @Post('purchase-orders/:purchaseOrderId')
   @ApiOperation({ summary: 'Sync a purchase order to mock ERP. Admin or Purchasing only.' })
   syncPurchaseOrder(
     @Param('purchaseOrderId') purchaseOrderId: string,
@@ -25,19 +25,19 @@ export class ErpIntegrationController {
     return this.erpIntegrationService.syncPurchaseOrder(purchaseOrderId, dto, user);
   }
 
-  @Post('sync-logs/:id/retry')
+  @Post('retry/:id')
   @ApiOperation({ summary: 'Retry a failed ERP sync log. Admin or Purchasing only.' })
   retryFailedSync(@Param('id') id: string, @Body() dto: SyncPurchaseOrderDto, @CurrentUser() user: AuthenticatedUser) {
     return this.erpIntegrationService.retryFailedSync(id, dto, user);
   }
 
-  @Get('sync-logs')
+  @Get('logs')
   @ApiOperation({ summary: 'List ERP sync logs. Admin or Purchasing only.' })
   findLogs(@Query() query: ErpSyncLogQueryDto) {
     return this.erpIntegrationService.findLogs(query);
   }
 
-  @Get('sync-logs/:id')
+  @Get('logs/:id')
   @ApiOperation({ summary: 'Get ERP sync log detail. Admin or Purchasing only.' })
   findLog(@Param('id') id: string) {
     return this.erpIntegrationService.findLog(id);

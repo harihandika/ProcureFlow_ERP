@@ -62,6 +62,14 @@ export class AuditTrailsService {
       ...(query.entityType ? { entityType: query.entityType } : {}),
       ...(query.entityId ? { entityId: query.entityId } : {}),
       ...(query.actorId ? { actorId: query.actorId } : {}),
+      ...(query.dateFrom || query.dateTo
+        ? {
+            createdAt: {
+              ...(query.dateFrom ? { gte: query.dateFrom } : {}),
+              ...(query.dateTo ? { lte: query.dateTo } : {}),
+            },
+          }
+        : {}),
       ...(query.search
         ? {
             OR: [

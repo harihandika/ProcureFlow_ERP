@@ -36,6 +36,9 @@ describe('PurchaseRequestsService', () => {
     },
     $transaction: jest.fn(),
   };
+  const auditTrailsService = {
+    record: jest.fn(),
+  };
 
   const requester = {
     id: 'requester-id',
@@ -115,7 +118,7 @@ describe('PurchaseRequestsService', () => {
     prisma.packagingUnit.findFirst.mockResolvedValue({ id: 'unit-id', code: 'PCS', name: 'Piece' });
     prisma.purchaseRequest.create.mockResolvedValue(draftPurchaseRequest);
 
-    const service = new PurchaseRequestsService(prisma as never);
+    const service = new PurchaseRequestsService(prisma as never, auditTrailsService as never);
     await service.createDraft(
       {
         title: 'Laptop request',
@@ -161,7 +164,7 @@ describe('PurchaseRequestsService', () => {
       submittedAt: new Date(),
     });
 
-    const service = new PurchaseRequestsService(prisma as never);
+    const service = new PurchaseRequestsService(prisma as never, auditTrailsService as never);
     const result = await service.submit('pr-id', {}, requester);
 
     expect(tx.budget.update).toHaveBeenCalledWith({
@@ -180,6 +183,13 @@ describe('PurchaseRequestsService', () => {
         }),
       }),
     );
+    expect(auditTrailsService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'SUBMIT',
+        entityId: 'pr-id',
+        actorId: requester.id,
+      }),
+    );
     expect(result.status).toBe(PurchaseRequestStatus.SUBMITTED);
   });
 
@@ -190,7 +200,7 @@ describe('PurchaseRequestsService', () => {
     });
     prisma.budget.findFirst.mockResolvedValue(activeBudget);
 
-    const service = new PurchaseRequestsService(prisma as never);
+    const service = new PurchaseRequestsService(prisma as never, auditTrailsService as never);
 
     await expect(service.submit('pr-id', {}, requester)).rejects.toThrow(
       'Purchase request total exceeds available budget.',
@@ -202,7 +212,7 @@ describe('PurchaseRequestsService', () => {
       ...draftPurchaseRequest,
       status: PurchaseRequestStatus.SUBMITTED,
     });
-    const service = new PurchaseRequestsService(prisma as never);
+    const service = new PurchaseRequestsService(prisma as never, auditTrailsService as never);
 
     await expect(
       service.addItems(

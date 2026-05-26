@@ -40,6 +40,8 @@ enum BudgetTransactionStatus {
 enum PurchaseRequestStatus {
   DRAFT
   SUBMITTED
+  APPROVED
+  REJECTED
   CANCELLED
 }
 

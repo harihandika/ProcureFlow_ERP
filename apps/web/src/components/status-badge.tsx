@@ -1,6 +1,6 @@
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 
-export type WorkflowStatus = 'Draft' | 'Submitted' | 'Pending' | 'Approved' | 'Rejected' | 'Completed' | 'Failed';
+export type WorkflowStatus = 'Draft' | 'Submitted' | 'Pending' | 'Approved' | 'Rejected' | 'Cancelled' | 'Completed' | 'Failed';
 export type MasterDataStatus = 'Active' | 'Inactive';
 export type AppStatus = WorkflowStatus | MasterDataStatus;
 
@@ -10,6 +10,7 @@ const statusVariants: Record<WorkflowStatus, BadgeProps['variant']> = {
   Pending: 'amber',
   Approved: 'green',
   Rejected: 'red',
+  Cancelled: 'red',
   Completed: 'green',
   Failed: 'red',
 };

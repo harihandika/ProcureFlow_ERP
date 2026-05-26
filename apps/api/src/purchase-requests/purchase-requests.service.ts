@@ -1,5 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  AuditAction,
+  AuditEntityType,
   BudgetStatus,
   BudgetTransactionStatus,
   BudgetTransactionType,
@@ -11,6 +13,8 @@ import { CreatePurchaseRequestDto } from './dto/create-purchase-request.dto';
 import { PurchaseRequestItemInputDto } from './dto/purchase-request-item-input.dto';
 import { PurchaseRequestQueryDto } from './dto/purchase-request-query.dto';
 import { SubmitPurchaseRequestDto } from './dto/submit-purchase-request.dto';
+import { UpdatePurchaseRequestDto } from './dto/update-purchase-request.dto';
+import { AuditTrailsService } from '../audit-trails/audit-trails.service';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { getPagination, toPaginatedResult } from '../common/utils/pagination.util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -68,7 +72,10 @@ type PurchaseRequestWithRelations = Prisma.PurchaseRequestGetPayload<{ include: 
 
 @Injectable()
 export class PurchaseRequestsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditTrailsService: AuditTrailsService,
+  ) {}
 
   async createDraft(dto: CreatePurchaseRequestDto, user: AuthenticatedUser) {
     const departmentId = dto.departmentId ?? user.departmentId;
@@ -146,6 +153,50 @@ export class PurchaseRequestsService {
     return this.findPurchaseRequestOrThrow(id);
   }
 
+  async updateDraft(id: string, dto: UpdatePurchaseRequestDto, user: AuthenticatedUser) {
+    const purchaseRequest = await this.findPurchaseRequestOrThrow(id);
+    this.ensureRequesterCanMutate(purchaseRequest, user);
+    this.ensureDraft(purchaseRequest.status);
+
+    const departmentId = dto.departmentId ?? purchaseRequest.departmentId;
+    await this.validateDepartment(departmentId);
+
+    const budgetId = dto.budgetId ?? purchaseRequest.budgetId ?? undefined;
+    const budget = budgetId ? await this.validateBudget(budgetId, departmentId) : undefined;
+    const preparedItems = dto.items === undefined ? undefined : await this.prepareItems(dto.items);
+    const totalAmount = preparedItems === undefined ? purchaseRequest.totalAmount : this.sumLineTotals(preparedItems);
+
+    return this.prisma.$transaction(async (tx) => {
+      if (preparedItems !== undefined) {
+        await tx.purchaseRequestItem.deleteMany({
+          where: { purchaseRequestId: id },
+        });
+      }
+
+      return tx.purchaseRequest.update({
+        where: { id },
+        data: {
+          ...(dto.title !== undefined ? { title: dto.title.trim() } : {}),
+          ...(dto.description !== undefined ? { description: dto.description } : {}),
+          ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
+          ...(dto.requiredDate !== undefined ? { requiredDate: dto.requiredDate ? new Date(dto.requiredDate) : null } : {}),
+          departmentId,
+          budgetId,
+          currency: budget?.currency ?? purchaseRequest.currency,
+          totalAmount,
+          ...(preparedItems !== undefined
+            ? {
+                items: {
+                  create: preparedItems.map((preparedItem) => preparedItem.data),
+                },
+              }
+            : {}),
+        },
+        include: purchaseRequestInclude,
+      });
+    });
+  }
+
   async addItems(id: string, dto: AddPurchaseRequestItemsDto, user: AuthenticatedUser) {
     const purchaseRequest = await this.findPurchaseRequestOrThrow(id);
     this.ensureRequesterCanMutate(purchaseRequest, user);
@@ -193,7 +244,7 @@ export class PurchaseRequestsService {
       throw new BadRequestException('Purchase request total exceeds available budget.');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const submittedPurchaseRequest = await this.prisma.$transaction(async (tx) => {
       await tx.budget.update({
         where: { id: budget.id },
         data: {
@@ -226,6 +277,18 @@ export class PurchaseRequestsService {
         include: purchaseRequestInclude,
       });
     });
+
+    await this.auditTrailsService.record({
+      action: AuditAction.SUBMIT,
+      entityType: AuditEntityType.PURCHASE_REQUEST,
+      entityId: submittedPurchaseRequest.id,
+      entityLabel: submittedPurchaseRequest.requestNumber,
+      actorId: user.id,
+      before: { status: PurchaseRequestStatus.DRAFT },
+      after: { status: submittedPurchaseRequest.status, budgetId: budget.id },
+    });
+
+    return submittedPurchaseRequest;
   }
 
   private async findPurchaseRequestOrThrow(id: string) {

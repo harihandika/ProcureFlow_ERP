@@ -16,12 +16,17 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { MasterDataRecord } from '@/lib/master-data';
 
+export type FormFieldOption = {
+  label: string;
+  value: string;
+};
+
 export type FormField = {
-  key: keyof MasterDataRecord;
+  key: string;
   label: string;
   placeholder?: string;
   type?: 'text' | 'email' | 'number' | 'select';
-  options?: string[];
+  options?: Array<string | FormFieldOption>;
 };
 
 export function FormModal({
@@ -32,6 +37,7 @@ export function FormModal({
   record,
   onOpenChange,
   onSubmit,
+  isSubmitting = false,
 }: {
   open: boolean;
   title: string;
@@ -40,6 +46,7 @@ export function FormModal({
   record: MasterDataRecord | null;
   onOpenChange: (open: boolean) => void;
   onSubmit: (values: Record<string, string>) => void;
+  isSubmitting?: boolean;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
 
@@ -51,7 +58,7 @@ export function FormModal({
     setValues(
       Object.fromEntries(
         fields.map((field) => {
-          const value = record?.[field.key];
+          const value = record?.[field.key as keyof MasterDataRecord];
           return [field.key, value === undefined || value === null ? '' : String(value)];
         }),
       ),
@@ -84,11 +91,16 @@ export function FormModal({
                       <SelectValue placeholder={field.placeholder ?? field.label} />
                     </SelectTrigger>
                     <SelectContent>
-                      {(field.options ?? []).map((option) => (
-                        <SelectItem key={option} value={option}>
-                          {option}
-                        </SelectItem>
-                      ))}
+                      {(field.options ?? []).map((option) => {
+                        const value = typeof option === 'string' ? option : option.value;
+                        const label = typeof option === 'string' ? option : option.label;
+
+                        return (
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 ) : (
@@ -110,7 +122,9 @@ export function FormModal({
                 Cancel
               </Button>
             </DialogClose>
-            <Button type="submit">Save</Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? 'Saving...' : 'Save'}
+            </Button>
           </div>
         </form>
       </DialogContent>

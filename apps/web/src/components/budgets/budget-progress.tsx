@@ -1,5 +1,5 @@
-import type { Budget } from '@/lib/budget-data';
-import { getBudgetHealth, getBudgetUsage } from '@/lib/budget-data';
+import type { Budget } from '@/lib/budget-api';
+import { getBudgetHealth, getBudgetUsage } from '@/lib/budget-api';
 import { cn } from '@/lib/utils';
 
 export function BudgetProgress({ budget }: { budget: Budget }) {

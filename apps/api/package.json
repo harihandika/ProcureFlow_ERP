@@ -7,9 +7,10 @@
     "build": "nest build",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test": "jest --config ./jest.config.js",
+    "test:watch": "jest --config ./jest.config.js --watch",
+    "test:e2e": "jest --config ./test/jest-e2e.config.js",
+    "test:cov": "jest --config ./jest.config.js --coverage",
     "prisma:generate": "prisma generate --schema ../../prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema ../../prisma/schema.prisma",
     "prisma:deploy": "prisma migrate deploy --schema ../../prisma/schema.prisma",
@@ -50,23 +51,6 @@
     "ts-node": "^10.9.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
-  },
-  "jest": {
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "ts"
-    ],
-    "rootDir": "src",
-    "testRegex": ".*\\.spec\\.ts$",
-    "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
-    },
-    "collectCoverageFrom": [
-      "**/*.(t|j)s"
-    ],
-    "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

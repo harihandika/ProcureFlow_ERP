@@ -21,7 +21,8 @@ export class DepartmentsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List departments with pagination, search, and filters. Admin only.' })
+  @Roles(AppRole.Admin, AppRole.Requester)
+  @ApiOperation({ summary: 'List departments with pagination, search, and filters. Admin or Requester only.' })
   findAll(@Query() query: DepartmentQueryDto) {
     return this.departmentsService.findAll(query);
   }

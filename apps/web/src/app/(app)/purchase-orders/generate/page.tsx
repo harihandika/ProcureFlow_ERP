@@ -15,7 +15,7 @@ export default function GeneratePurchaseOrderPage() {
         </Button>
         <h1 className="text-2xl font-semibold tracking-normal text-slate-950">Generate Purchase Order</h1>
         <p className="mt-2 max-w-3xl text-sm text-slate-600">
-          Create a draft purchase order from an approved purchase request using dummy data.
+          Create a draft purchase order from an approved purchase request and assign a supplier.
         </p>
       </div>
 

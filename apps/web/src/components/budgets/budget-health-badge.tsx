@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import type { Budget } from '@/lib/budget-data';
-import { getBudgetHealth, getBudgetUsage } from '@/lib/budget-data';
+import type { Budget } from '@/lib/budget-api';
+import { getBudgetHealth, getBudgetUsage } from '@/lib/budget-api';
 
 export function BudgetHealthBadge({ budget }: { budget: Budget }) {
   const health = getBudgetHealth(budget);

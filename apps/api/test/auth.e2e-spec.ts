@@ -1,10 +1,8 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
+import { INestApplication } from '@nestjs/common';
 import { UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/prisma/prisma.service';
+import { createTestApp } from './helpers/create-test-app';
 
 describe('AuthController (e2e)', () => {
   let app: INestApplication;
@@ -36,24 +34,8 @@ describe('AuthController (e2e)', () => {
     prismaMock.user.update.mockResolvedValue({});
     prismaMock.auditTrail.create.mockResolvedValue({});
 
-    const moduleFixture = await Test.createTestingModule({
-      imports: [AppModule],
-    })
-      .overrideProvider(PrismaService)
-      .useValue(prismaMock)
-      .compile();
-
-    app = moduleFixture.createNestApplication();
-    app.setGlobalPrefix('api');
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
-
-    await app.init();
+    const testApp = await createTestApp({ prismaService: prismaMock });
+    app = testApp.app;
   });
 
   afterAll(async () => {

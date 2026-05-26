@@ -21,13 +21,15 @@ export class SuppliersController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List suppliers with pagination and search. Admin only.' })
+  @Roles(AppRole.Admin, AppRole.Purchasing)
+  @ApiOperation({ summary: 'List suppliers with pagination and search.' })
   findAll(@Query() query: SupplierQueryDto) {
     return this.suppliersService.findAll(query);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get a supplier by id. Admin only.' })
+  @Roles(AppRole.Admin, AppRole.Purchasing)
+  @ApiOperation({ summary: 'Get a supplier by id.' })
   findOne(@Param('id') id: string) {
     return this.suppliersService.findOne(id);
   }

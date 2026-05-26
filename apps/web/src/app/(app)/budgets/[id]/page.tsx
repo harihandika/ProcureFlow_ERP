@@ -1,28 +1,67 @@
+'use client';
+
 import type React from 'react';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { useParams } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Banknote, CalendarDays, Landmark, Wallet } from 'lucide-react';
 import { BudgetHealthBadge } from '@/components/budgets/budget-health-badge';
 import { BudgetProgress } from '@/components/budgets/budget-progress';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { budgetTransactions, budgets, getRemainingBudget } from '@/lib/budget-data';
+import { getApiErrorMessage } from '@/lib/api-error';
+import {
+  fetchBudget,
+  fetchBudgetTransactions,
+  getBudgetUsedAmount,
+  getBudgetUsage,
+  getRemainingBudget,
+} from '@/lib/budget-api';
 import { formatCurrency } from '@/lib/utils';
 
-export function generateStaticParams() {
-  return budgets.map((budget) => ({ id: budget.id }));
-}
+export default function BudgetDetailPage() {
+  const params = useParams<{ id: string }>();
+  const budgetId = params.id;
 
-export default async function BudgetDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const budget = budgets.find((item) => item.id === id);
+  const budgetQuery = useQuery({
+    queryKey: ['budgets', budgetId],
+    queryFn: () => fetchBudget(budgetId),
+    enabled: Boolean(budgetId),
+  });
 
-  if (!budget) {
-    notFound();
+  const transactionsQuery = useQuery({
+    queryKey: ['budgets', budgetId, 'transactions'],
+    queryFn: () => fetchBudgetTransactions(budgetId, { page: 1, limit: 100 }),
+    enabled: Boolean(budgetId),
+  });
+
+  const budget = budgetQuery.data;
+  const transactions = transactionsQuery.data?.data ?? [];
+
+  if (budgetQuery.isLoading) {
+    return (
+      <div className="rounded-lg border bg-white p-8 text-center text-sm text-slate-500 shadow-sm">
+        Loading budget detail...
+      </div>
+    );
   }
 
-  const transactions = budgetTransactions.filter((transaction) => transaction.budgetId === budget.id);
+  if (budgetQuery.isError || !budget) {
+    return (
+      <div className="space-y-4">
+        <Button asChild variant="ghost" size="sm" className="-ml-3">
+          <Link href="/budgets">
+            <ArrowLeft className="h-4 w-4" />
+            Back to budgets
+          </Link>
+        </Button>
+        <div className="rounded-lg border bg-white p-8 text-center text-sm text-red-600 shadow-sm">
+          {getApiErrorMessage(budgetQuery.error, 'Unable to load budget detail.')}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -39,16 +78,16 @@ export default async function BudgetDetailPage({ params }: { params: Promise<{ i
             <BudgetHealthBadge budget={budget} />
           </div>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            {budget.code} for {budget.department}, {budget.period}. Dummy detail view for portfolio budget management.
+            {budget.code} for {budget.department.name}, {budget.period ?? 'No period'}. API-backed budget detail and transaction history.
           </p>
         </div>
       </div>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <DetailMetric label="Total Budget" value={formatCurrency(budget.totalBudget)} icon={Landmark} />
-        <DetailMetric label="Used Budget" value={formatCurrency(budget.usedBudget)} icon={Wallet} />
+        <DetailMetric label="Total Budget" value={formatCurrency(budget.allocatedAmount)} icon={Landmark} />
+        <DetailMetric label="Used Budget" value={formatCurrency(getBudgetUsedAmount(budget))} icon={Wallet} />
         <DetailMetric label="Remaining Budget" value={formatCurrency(getRemainingBudget(budget))} icon={Banknote} />
-        <DetailMetric label="Period" value={budget.period} icon={CalendarDays} />
+        <DetailMetric label="Period" value={budget.period ?? '-'} icon={CalendarDays} />
       </section>
 
       <Card>
@@ -58,18 +97,22 @@ export default async function BudgetDetailPage({ params }: { params: Promise<{ i
         </CardHeader>
         <CardContent>
           <BudgetProgress budget={budget} />
-          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
+          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-4">
             <div className="rounded-md border bg-slate-50 p-3">
               <div className="text-slate-500">Reserved</div>
-              <div className="mt-1 font-semibold text-slate-950">{formatCurrency(budget.reservedBudget)}</div>
+              <div className="mt-1 font-semibold text-slate-950">{formatCurrency(budget.reservedAmount)}</div>
             </div>
             <div className="rounded-md border bg-slate-50 p-3">
-              <div className="text-slate-500">Department</div>
-              <div className="mt-1 font-semibold text-slate-950">{budget.department}</div>
+              <div className="text-slate-500">Committed</div>
+              <div className="mt-1 font-semibold text-slate-950">{formatCurrency(budget.committedAmount)}</div>
             </div>
             <div className="rounded-md border bg-slate-50 p-3">
-              <div className="text-slate-500">Last Updated</div>
-              <div className="mt-1 font-semibold text-slate-950">{budget.updatedAt}</div>
+              <div className="text-slate-500">Consumed</div>
+              <div className="mt-1 font-semibold text-slate-950">{formatCurrency(budget.consumedAmount)}</div>
+            </div>
+            <div className="rounded-md border bg-slate-50 p-3">
+              <div className="text-slate-500">Usage</div>
+              <div className="mt-1 font-semibold text-slate-950">{getBudgetUsage(budget)}%</div>
             </div>
           </div>
         </CardContent>
@@ -85,34 +128,45 @@ export default async function BudgetDetailPage({ params }: { params: Promise<{ i
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="min-w-[170px]">Transaction No</TableHead>
+                  <TableHead className="min-w-[190px]">Transaction No</TableHead>
                   <TableHead>Type</TableHead>
-                  <TableHead>Reference</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead>Posted By</TableHead>
                   <TableHead>Posted At</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {transactions.map((transaction) => (
-                  <TableRow key={transaction.id}>
-                    <TableCell className="font-medium text-slate-900">{transaction.transactionNo}</TableCell>
-                    <TableCell>{transaction.type}</TableCell>
-                    <TableCell>{transaction.reference}</TableCell>
-                    <TableCell className="min-w-[260px]">{transaction.description}</TableCell>
-                    <TableCell>{transaction.createdBy}</TableCell>
-                    <TableCell>{transaction.postedAt}</TableCell>
-                    <TableCell className="text-right font-medium">{formatCurrency(transaction.amount)}</TableCell>
-                  </TableRow>
-                ))}
-                {!transactions.length ? (
+                {transactionsQuery.isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-24 text-center text-slate-500">
+                    <TableCell colSpan={6} className="h-24 text-center text-slate-500">
+                      Loading transactions...
+                    </TableCell>
+                  </TableRow>
+                ) : transactionsQuery.isError ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="h-24 text-center text-red-600">
+                      {getApiErrorMessage(transactionsQuery.error, 'Unable to load transaction history.')}
+                    </TableCell>
+                  </TableRow>
+                ) : transactions.length ? (
+                  transactions.map((transaction) => (
+                    <TableRow key={transaction.id}>
+                      <TableCell className="font-medium text-slate-900">{transaction.transactionNo}</TableCell>
+                      <TableCell>{formatEnum(transaction.type)}</TableCell>
+                      <TableCell>{formatEnum(transaction.status)}</TableCell>
+                      <TableCell className="min-w-[260px]">{transaction.description ?? '-'}</TableCell>
+                      <TableCell>{transaction.occurredAt.slice(0, 10)}</TableCell>
+                      <TableCell className="text-right font-medium">{formatCurrency(transaction.amount)}</TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={6} className="h-24 text-center text-slate-500">
                       No transaction history for this budget.
                     </TableCell>
                   </TableRow>
-                ) : null}
+                )}
               </TableBody>
             </Table>
           </div>
@@ -120,6 +174,13 @@ export default async function BudgetDetailPage({ params }: { params: Promise<{ i
       </Card>
     </div>
   );
+}
+
+function formatEnum(value: string) {
+  return value
+    .split('_')
+    .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
+    .join(' ');
 }
 
 function DetailMetric({

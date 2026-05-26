@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { AuditTrailsModule } from './audit-trails/audit-trails.module';
+import { ApprovalsModule } from './approvals/approvals.module';
 import { AuthModule } from './auth/auth.module';
 import { BudgetsModule } from './budgets/budgets.module';
 import { CommonModule } from './common/common.module';
@@ -13,6 +14,7 @@ import { ErpIntegrationModule } from './erp-integration/erp-integration.module';
 import { ItemsModule } from './items/items.module';
 import { PackagingUnitsModule } from './packaging-units/packaging-units.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
 import { PurchaseRequestsModule } from './purchase-requests/purchase-requests.module';
 import { ReceivingModule } from './receiving/receiving.module';
 import { RolesModule } from './roles/roles.module';
@@ -36,6 +38,8 @@ import { WarehousesModule } from './warehouses/warehouses.module';
     PackagingUnitsModule,
     BudgetsModule,
     PurchaseRequestsModule,
+    ApprovalsModule,
+    PurchaseOrdersModule,
     ReceivingModule,
     ErpIntegrationModule,
   ],

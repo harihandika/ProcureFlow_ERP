@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import { AuditAction, AuditEntityType } from '@prisma/client';
-import { IsEnum, IsOptional, IsUUID } from 'class-validator';
+import { IsDate, IsEnum, IsOptional, IsUUID } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 export class AuditTrailQueryDto extends PaginationQueryDto {
@@ -23,4 +24,16 @@ export class AuditTrailQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID()
   actorId?: string;
+
+  @ApiPropertyOptional({ description: 'Start date/time for createdAt filter.' })
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  dateFrom?: Date;
+
+  @ApiPropertyOptional({ description: 'End date/time for createdAt filter.' })
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  dateTo?: Date;
 }

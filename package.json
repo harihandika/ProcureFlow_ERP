@@ -9,14 +9,22 @@
     "api:dev": "npm run start:dev -w @procureflow/api",
     "api:build": "npm run build -w @procureflow/api",
     "api:test": "npm run test -w @procureflow/api",
+    "api:test:watch": "npm run test:watch -w @procureflow/api",
     "api:test:e2e": "npm run test:e2e -w @procureflow/api",
+    "api:test:cov": "npm run test:cov -w @procureflow/api",
+    "test:e2e": "playwright test",
     "web:dev": "npm run dev -w @procureflow/web",
     "web:start": "npm run start -w @procureflow/web",
     "web:build": "npm run build -w @procureflow/web",
     "web:lint": "npm run lint -w @procureflow/web",
+    "web:test": "npm run test -w @procureflow/web",
+    "web:test:watch": "npm run test:watch -w @procureflow/web",
     "web:typecheck": "npm run typecheck -w @procureflow/web",
     "prisma:generate": "npm run prisma:generate -w @procureflow/api",
     "prisma:migrate": "npm run prisma:migrate -w @procureflow/api",
     "prisma:seed": "npm run prisma:seed -w @procureflow/api"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
   }
 }

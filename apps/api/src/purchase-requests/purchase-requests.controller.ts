@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AddPurchaseRequestItemsDto } from './dto/add-purchase-request-items.dto';
 import { CreatePurchaseRequestDto } from './dto/create-purchase-request.dto';
 import { PurchaseRequestQueryDto } from './dto/purchase-request-query.dto';
 import { SubmitPurchaseRequestDto } from './dto/submit-purchase-request.dto';
+import { UpdatePurchaseRequestDto } from './dto/update-purchase-request.dto';
 import { PurchaseRequestsService } from './purchase-requests.service';
 import { AppRole } from '../common/constants/roles';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -12,7 +13,7 @@ import { AuthenticatedUser } from '../common/interfaces/authenticated-user.inter
 
 @ApiTags('Purchase Requests')
 @ApiBearerAuth()
-@Roles(AppRole.Admin, AppRole.Requester, AppRole.Manager, AppRole.Finance)
+@Roles(AppRole.Admin, AppRole.Requester, AppRole.Manager, AppRole.Finance, AppRole.Purchasing)
 @Controller('purchase-requests')
 export class PurchaseRequestsController {
   constructor(private readonly purchaseRequestsService: PurchaseRequestsService) {}
@@ -34,6 +35,13 @@ export class PurchaseRequestsController {
   @ApiOperation({ summary: 'Get purchase request detail.' })
   findOne(@Param('id') id: string) {
     return this.purchaseRequestsService.findOne(id);
+  }
+
+  @Patch(':id')
+  @Roles(AppRole.Admin, AppRole.Requester)
+  @ApiOperation({ summary: 'Update a draft purchase request and replace its items.' })
+  updateDraft(@Param('id') id: string, @Body() dto: UpdatePurchaseRequestDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.purchaseRequestsService.updateDraft(id, dto, user);
   }
 
   @Post(':id/items')

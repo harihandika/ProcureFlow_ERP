@@ -31,6 +31,11 @@ export function DataTable({
   onCreate,
   onEdit,
   onDelete,
+  totalRows,
+  pageCount,
+  isServerDriven = false,
+  isLoading = false,
+  errorMessage,
 }: {
   rows: MasterDataRecord[];
   columns: DataTableColumn[];
@@ -46,6 +51,11 @@ export function DataTable({
   onCreate: () => void;
   onEdit: (record: MasterDataRecord) => void;
   onDelete: (record: MasterDataRecord) => void;
+  totalRows?: number;
+  pageCount?: number;
+  isServerDriven?: boolean;
+  isLoading?: boolean;
+  errorMessage?: string;
 }) {
   const normalizedSearch = search.trim().toLowerCase();
   const filteredRows = rows.filter((row) => {
@@ -56,9 +66,10 @@ export function DataTable({
 
     return matchesSearch && matchesStatus;
   });
-  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
-  const currentPage = Math.min(page, pageCount);
-  const visibleRows = filteredRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const effectiveTotalRows = totalRows ?? filteredRows.length;
+  const effectivePageCount = Math.max(1, pageCount ?? Math.ceil(filteredRows.length / pageSize));
+  const currentPage = Math.min(page, effectivePageCount);
+  const visibleRows = isServerDriven ? rows : filteredRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
     <div className="rounded-lg border bg-white shadow-sm">
@@ -97,7 +108,19 @@ export function DataTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {visibleRows.length ? (
+            {isLoading ? (
+              <TableRow>
+                <TableCell colSpan={columns.length + 1} className="h-28 text-center text-slate-500">
+                  Loading records...
+                </TableCell>
+              </TableRow>
+            ) : errorMessage ? (
+              <TableRow>
+                <TableCell colSpan={columns.length + 1} className="h-28 text-center text-red-600">
+                  {errorMessage}
+                </TableCell>
+              </TableRow>
+            ) : visibleRows.length ? (
               visibleRows.map((row) => (
                 <TableRow key={row.id}>
                   {columns.map((column) => (
@@ -130,26 +153,26 @@ export function DataTable({
 
       <div className="flex flex-col gap-3 border-t px-4 py-3 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          Showing {visibleRows.length} of {filteredRows.length} records
+          Showing {visibleRows.length} of {effectiveTotalRows} records
         </div>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            disabled={currentPage === 1}
+            disabled={currentPage === 1 || isLoading}
             onClick={() => onPageChange(Math.max(1, currentPage - 1))}
           >
             <ChevronLeft className="h-4 w-4" />
             Previous
           </Button>
           <div className="w-20 text-center text-sm font-medium">
-            {currentPage} / {pageCount}
+            {currentPage} / {effectivePageCount}
           </div>
           <Button
             variant="outline"
             size="sm"
-            disabled={currentPage === pageCount}
-            onClick={() => onPageChange(Math.min(pageCount, currentPage + 1))}
+            disabled={currentPage === effectivePageCount || isLoading}
+            onClick={() => onPageChange(Math.min(effectivePageCount, currentPage + 1))}
           >
             Next
             <ChevronRight className="h-4 w-4" />

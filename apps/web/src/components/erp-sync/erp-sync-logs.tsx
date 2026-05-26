@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { RefreshCw, Search, ServerCog } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Loader2, RefreshCw, Search, Send, ServerCog } from 'lucide-react';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,57 +10,100 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { erpSyncLogs as initialErpSyncLogs, type ErpSyncLog, type ErpSyncStatus } from '@/lib/erp-audit-data';
+import { getApiErrorMessage } from '@/lib/api-error';
+import {
+  fetchErpSyncLogs,
+  getOperationLabel,
+  retryErpSync,
+  syncPurchaseOrderToErp,
+  type ErpSyncLog,
+  type ErpSyncStatus,
+  type ErpSyncStatusLabel,
+} from '@/lib/erp-sync-api';
+import { fetchPurchaseOrders } from '@/lib/purchase-order-api';
+import { showErrorToast, showSuccessToast } from '@/lib/toast';
 
-const statusOptions = ['All', 'Pending', 'Success', 'Failed'] as const;
+const allValue = 'All';
+const statusOptions: Array<{ value: typeof allValue | Exclude<ErpSyncStatus, 'RETRYING'>; label: typeof allValue | ErpSyncStatusLabel }> = [
+  { value: allValue, label: allValue },
+  { value: 'PENDING', label: 'Pending' },
+  { value: 'SUCCESS', label: 'Success' },
+  { value: 'FAILED', label: 'Failed' },
+];
 
-const statusVariants: Record<ErpSyncStatus, BadgeProps['variant']> = {
+const statusVariants: Record<ErpSyncStatusLabel, BadgeProps['variant']> = {
   Pending: 'amber',
   Success: 'green',
   Failed: 'red',
 };
 
 export function ErpSyncLogs() {
-  const [logs, setLogs] = useState<ErpSyncLog[]>(initialErpSyncLogs);
-  const [statusFilter, setStatusFilter] = useState<(typeof statusOptions)[number]>('All');
+  const queryClient = useQueryClient();
+  const [statusFilter, setStatusFilter] = useState<(typeof statusOptions)[number]['value']>(allValue);
   const [dateFilter, setDateFilter] = useState('');
   const [search, setSearch] = useState('');
+  const [purchaseOrderId, setPurchaseOrderId] = useState('');
 
-  const filteredLogs = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
+  const logsQuery = useQuery({
+    queryKey: ['erp-sync', 'logs', { statusFilter, search }],
+    queryFn: () =>
+      fetchErpSyncLogs({
+        page: 1,
+        limit: 100,
+        search,
+        status: statusFilter === allValue ? undefined : statusFilter,
+      }),
+  });
 
-    return logs.filter((log) => {
-      const matchesStatus = statusFilter === 'All' || log.status === statusFilter;
-      const matchesDate = !dateFilter || log.syncedAt.startsWith(dateFilter);
-      const matchesSearch =
-        !keyword ||
-        log.poNumber.toLowerCase().includes(keyword) ||
-        log.supplierName.toLowerCase().includes(keyword) ||
-        log.id.toLowerCase().includes(keyword);
+  const purchaseOrdersQuery = useQuery({
+    queryKey: ['purchase-orders', 'erp-sync-options'],
+    queryFn: () => fetchPurchaseOrders({ page: 1, limit: 100 }),
+  });
 
-      return matchesStatus && matchesDate && matchesSearch;
-    });
-  }, [dateFilter, logs, search, statusFilter]);
+  const logs = useMemo(() => logsQuery.data?.data ?? [], [logsQuery.data]);
+  const purchaseOrders = useMemo(
+    () => (purchaseOrdersQuery.data?.data ?? []).filter((order) => order.status !== 'CANCELLED'),
+    [purchaseOrdersQuery.data],
+  );
 
-  function retrySync(logId: string) {
-    setLogs((current) =>
-      current.map((log) =>
-        log.id === logId
-          ? {
-              ...log,
-              status: 'Pending',
-              attempts: log.attempts + 1,
-              errorMessage: undefined,
-              syncedAt: '2026-05-12 15:30',
-            }
-          : log,
-      ),
-    );
-  }
+  useEffect(() => {
+    if (!purchaseOrderId && purchaseOrders[0]) {
+      setPurchaseOrderId(purchaseOrders[0].id);
+    }
+  }, [purchaseOrderId, purchaseOrders]);
 
-  const failedCount = logs.filter((log) => log.status === 'Failed').length;
-  const pendingCount = logs.filter((log) => log.status === 'Pending').length;
-  const successCount = logs.filter((log) => log.status === 'Success').length;
+  const filteredLogs = useMemo(
+    () => logs.filter((log) => !dateFilter || log.createdAt.startsWith(dateFilter) || log.syncedAt?.startsWith(dateFilter)),
+    [dateFilter, logs],
+  );
+
+  const syncMutation = useMutation({
+    mutationFn: syncPurchaseOrderToErp,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['erp-sync'] });
+      void queryClient.invalidateQueries({ queryKey: ['purchase-orders'] });
+      showSuccessToast('Purchase order sync submitted.');
+    },
+    onError: (error) => {
+      showErrorToast(error, 'Unable to sync purchase order.');
+    },
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: retryErpSync,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['erp-sync'] });
+      void queryClient.invalidateQueries({ queryKey: ['purchase-orders'] });
+      showSuccessToast('ERP sync retry submitted.');
+    },
+    onError: (error) => {
+      showErrorToast(error, 'Unable to retry ERP sync.');
+    },
+  });
+
+  const failedCount = logs.filter((log) => log.statusLabel === 'Failed').length;
+  const pendingCount = logs.filter((log) => log.statusLabel === 'Pending').length;
+  const successCount = logs.filter((log) => log.statusLabel === 'Success').length;
 
   return (
     <div className="space-y-6">
@@ -74,7 +118,7 @@ export function ErpSyncLogs() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <CardTitle>ERP Sync Logs</CardTitle>
-              <CardDescription>Dummy simulation of purchase order synchronization to an external ERP.</CardDescription>
+              <CardDescription>Purchase order synchronization attempts to the mock ERP connector.</CardDescription>
             </div>
             <div className="flex items-center gap-2 rounded-md border bg-slate-50 px-3 py-2 text-sm text-slate-600">
               <ServerCog className="h-4 w-4 text-blue-800" />
@@ -84,6 +128,33 @@ export function ErpSyncLogs() {
         </CardHeader>
 
         <CardContent className="space-y-4 pt-5">
+          <div className="rounded-lg border bg-slate-50 p-4">
+            <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+              <div>
+                <Label>Purchase Order</Label>
+                <Select value={purchaseOrderId} onValueChange={setPurchaseOrderId}>
+                  <SelectTrigger className="mt-2">
+                    <SelectValue placeholder="Select purchase order" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {purchaseOrders.map((order) => (
+                      <SelectItem key={order.id} value={order.id}>
+                        {order.poNumber} - {order.supplier.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button disabled={!purchaseOrderId || syncMutation.isPending || purchaseOrdersQuery.isLoading} onClick={() => syncMutation.mutate(purchaseOrderId)}>
+                {syncMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                Sync PO
+              </Button>
+            </div>
+            {purchaseOrdersQuery.isError ? (
+              <p className="mt-2 text-xs text-red-600">{getApiErrorMessage(purchaseOrdersQuery.error, 'Unable to load purchase orders.')}</p>
+            ) : null}
+          </div>
+
           <div className="grid gap-3 lg:grid-cols-[1fr_180px_180px]">
             <div>
               <Label htmlFor="erp-search">Search</Label>
@@ -93,7 +164,7 @@ export function ErpSyncLogs() {
                   id="erp-search"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search sync id, PO, or supplier"
+                  placeholder="Search external id, PO, or error"
                   className="pl-9"
                 />
               </div>
@@ -106,8 +177,8 @@ export function ErpSyncLogs() {
                 </SelectTrigger>
                 <SelectContent>
                   {statusOptions.map((status) => (
-                    <SelectItem key={status} value={status}>
-                      {status}
+                    <SelectItem key={status.value} value={status.value}>
+                      {status.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -125,7 +196,6 @@ export function ErpSyncLogs() {
                 <TableRow>
                   <TableHead>Sync ID</TableHead>
                   <TableHead>Purchase Order</TableHead>
-                  <TableHead>Supplier</TableHead>
                   <TableHead>Operation</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Attempts</TableHead>
@@ -135,29 +205,36 @@ export function ErpSyncLogs() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredLogs.map((log) => (
-                  <TableRow key={log.id}>
-                    <TableCell className="font-medium text-slate-900">{log.id}</TableCell>
-                    <TableCell>{log.poNumber}</TableCell>
-                    <TableCell>{log.supplierName}</TableCell>
-                    <TableCell>{log.operation}</TableCell>
-                    <TableCell>
-                      <ErpStatusBadge status={log.status} />
-                    </TableCell>
-                    <TableCell className="text-right">{log.attempts}</TableCell>
-                    <TableCell>{log.syncedAt}</TableCell>
-                    <TableCell className="text-sm text-slate-600">{log.errorMessage ?? '-'}</TableCell>
-                    <TableCell className="text-right">
-                      <Button size="sm" variant="outline" disabled={log.status !== 'Failed'} onClick={() => retrySync(log.id)}>
-                        <RefreshCw className="h-4 w-4" />
-                        Retry
-                      </Button>
+                {logsQuery.isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="h-24 text-center text-slate-500">
+                      <span className="inline-flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading ERP sync logs...
+                      </span>
                     </TableCell>
                   </TableRow>
-                ))}
-                {filteredLogs.length === 0 ? (
+                ) : null}
+                {logsQuery.isError ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="py-8 text-center text-slate-500">
+                    <TableCell colSpan={8} className="h-24 text-center text-red-600">
+                      {getApiErrorMessage(logsQuery.error, 'Unable to load ERP sync logs.')}
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+                {!logsQuery.isLoading && !logsQuery.isError
+                  ? filteredLogs.map((log) => (
+                      <ErpSyncLogRow
+                        key={log.id}
+                        log={log}
+                        isRetrying={retryMutation.isPending && retryMutation.variables === log.id}
+                        onRetry={() => retryMutation.mutate(log.id)}
+                      />
+                    ))
+                  : null}
+                {!logsQuery.isLoading && !logsQuery.isError && filteredLogs.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="py-8 text-center text-slate-500">
                       No sync logs match the selected filters.
                     </TableCell>
                   </TableRow>
@@ -171,7 +248,39 @@ export function ErpSyncLogs() {
   );
 }
 
-function ErpStatusBadge({ status }: { status: ErpSyncStatus }) {
+function ErpSyncLogRow({
+  log,
+  isRetrying,
+  onRetry,
+}: {
+  log: ErpSyncLog;
+  isRetrying: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <TableRow>
+      <TableCell className="font-medium text-slate-900">{log.id}</TableCell>
+      <TableCell>{log.purchaseOrder.poNumber || '-'}</TableCell>
+      <TableCell>{getOperationLabel(log.operation)}</TableCell>
+      <TableCell>
+        <ErpStatusBadge status={log.statusLabel} />
+      </TableCell>
+      <TableCell className="text-right">
+        {log.attemptNo} / {log.maxAttempts}
+      </TableCell>
+      <TableCell>{log.syncedAt ? formatDateTime(log.syncedAt) : '-'}</TableCell>
+      <TableCell className="text-sm text-slate-600">{log.errorMessage ?? '-'}</TableCell>
+      <TableCell className="text-right">
+        <Button size="sm" variant="outline" disabled={log.status !== 'FAILED' || isRetrying} onClick={onRetry}>
+          {isRetrying ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Retry
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function ErpStatusBadge({ status }: { status: ErpSyncStatusLabel }) {
   return <Badge variant={statusVariants[status]}>{status}</Badge>;
 }
 
@@ -190,4 +299,20 @@ function SyncMetric({ label, value, tone }: { label: string; value: string; tone
       </CardHeader>
     </Card>
   );
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
 }

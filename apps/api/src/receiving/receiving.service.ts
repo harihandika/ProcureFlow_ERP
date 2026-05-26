@@ -2,8 +2,10 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { AuditAction, AuditEntityType, Prisma, PurchaseOrderStatus, ReceivingStatus } from '@prisma/client';
 import { CreateReceivingDto } from './dto/create-receiving.dto';
 import { ReceivePoItemDto } from './dto/receive-po-item.dto';
+import { ReceivingQueryDto } from './dto/receiving-query.dto';
 import { AuditTrailsService } from '../audit-trails/audit-trails.service';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
+import { getPagination, toPaginatedResult } from '../common/utils/pagination.util';
 import { PrismaService } from '../prisma/prisma.service';
 
 const purchaseOrderInclude = {
@@ -40,6 +42,13 @@ const receivingInclude = {
       id: true,
       poNumber: true,
       status: true,
+      supplier: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+        },
+      },
     },
   },
   warehouse: {
@@ -70,6 +79,7 @@ const receivingInclude = {
           id: true,
           itemSkuSnapshot: true,
           itemNameSnapshot: true,
+          unitCodeSnapshot: true,
           quantityOrdered: true,
           quantityReceived: true,
         },
@@ -186,6 +196,40 @@ export class ReceivingService {
     }
 
     return receiving;
+  }
+
+  async findAll(query: ReceivingQueryDto) {
+    const { page, limit, skip, take } = getPagination(query);
+    const where: Prisma.ReceivingWhereInput = {
+      deletedAt: null,
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.purchaseOrderId ? { purchaseOrderId: query.purchaseOrderId } : {}),
+      ...(query.search
+        ? {
+            OR: [
+              { receivingNumber: { contains: query.search, mode: 'insensitive' } },
+              { deliveryNoteNo: { contains: query.search, mode: 'insensitive' } },
+              { purchaseOrder: { poNumber: { contains: query.search, mode: 'insensitive' } } },
+              { purchaseOrder: { supplier: { name: { contains: query.search, mode: 'insensitive' } } } },
+              { warehouse: { name: { contains: query.search, mode: 'insensitive' } } },
+              { receivedBy: { fullName: { contains: query.search, mode: 'insensitive' } } },
+            ],
+          }
+        : {}),
+    };
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.receiving.findMany({
+        where,
+        include: receivingInclude,
+        skip,
+        take,
+        orderBy: { receivedAt: 'desc' },
+      }),
+      this.prisma.receiving.count({ where }),
+    ]);
+
+    return toPaginatedResult(data, total, page, limit);
   }
 
   async findByPurchaseOrder(purchaseOrderId: string) {

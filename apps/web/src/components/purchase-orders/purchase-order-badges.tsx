@@ -1,26 +1,26 @@
 import { Badge, type BadgeProps } from '@/components/ui/badge';
-import type { ErpSyncStatus, PurchaseOrderStatus } from '@/lib/purchase-order-data';
+import type { ErpSyncStatusLabel, PurchaseOrderStatusLabel } from '@/lib/purchase-order-api';
 
-const poStatusVariant: Record<PurchaseOrderStatus, BadgeProps['variant']> = {
+const poStatusVariant: Record<PurchaseOrderStatusLabel, BadgeProps['variant']> = {
   Draft: 'slate',
   Issued: 'blue',
-  Sent: 'amber',
   'Partially Received': 'amber',
   Completed: 'green',
   Cancelled: 'red',
 };
 
-const erpStatusVariant: Record<ErpSyncStatus, BadgeProps['variant']> = {
+const erpStatusVariant: Record<ErpSyncStatusLabel, BadgeProps['variant']> = {
   'Not Synced': 'slate',
   Pending: 'amber',
   Success: 'green',
   Failed: 'red',
+  Retrying: 'amber',
 };
 
-export function POStatusBadge({ status }: { status: PurchaseOrderStatus }) {
+export function POStatusBadge({ status }: { status: PurchaseOrderStatusLabel }) {
   return <Badge variant={poStatusVariant[status]}>{status}</Badge>;
 }
 
-export function ErpSyncStatusBadge({ status }: { status: ErpSyncStatus }) {
+export function ErpSyncStatusBadge({ status }: { status: ErpSyncStatusLabel }) {
   return <Badge variant={erpStatusVariant[status]}>ERP {status}</Badge>;
 }

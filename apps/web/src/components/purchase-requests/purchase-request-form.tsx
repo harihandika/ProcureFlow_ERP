@@ -1,7 +1,10 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Plus, Save, Send, Trash2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { useEffect, useMemo } from 'react';
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
@@ -10,21 +13,34 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { budgets, getRemainingBudget } from '@/lib/budget-data';
-import { getRequestTotal, requestItemOptions } from '@/lib/purchase-request-data';
+import { getApiErrorMessage } from '@/lib/api-error';
+import { fetchBudgets, getRemainingBudget } from '@/lib/budget-api';
+import { fetchMasterData } from '@/lib/master-data-api';
+import {
+  createPurchaseRequest,
+  getRequestTotal,
+  submitPurchaseRequest,
+  updatePurchaseRequest,
+  type PurchaseRequest,
+  type PurchaseRequestItemPayload,
+  type PurchaseRequestPayload,
+} from '@/lib/purchase-request-api';
+import { showErrorToast, showSuccessToast } from '@/lib/toast';
 import { formatCurrency } from '@/lib/utils';
 
 const formSchema = z.object({
   title: z.string().trim().min(3, 'Title is required.'),
-  department: z.string().min(1, 'Department is required.'),
+  description: z.string().optional(),
+  departmentId: z.string().min(1, 'Department is required.'),
   budgetId: z.string().min(1, 'Budget is required.'),
   requiredDate: z.string().min(1, 'Required date is required.'),
   items: z
     .array(
       z.object({
         itemId: z.string().min(1, 'Item is required.'),
+        packagingUnitId: z.string().min(1, 'Packaging unit is required.'),
         quantity: z.coerce.number().positive('Quantity must be greater than zero.'),
-        estimatedPrice: z.coerce.number().nonnegative('Estimated price cannot be negative.'),
+        estimatedUnitPrice: z.coerce.number().nonnegative('Estimated price cannot be negative.'),
       }),
     )
     .min(1, 'At least one item is required.'),
@@ -32,44 +48,173 @@ const formSchema = z.object({
 
 type PurchaseRequestFormInput = z.input<typeof formSchema>;
 type PurchaseRequestFormValues = z.output<typeof formSchema>;
+type SubmitAction = 'draft' | 'submit';
 
-const departments = Array.from(new Set(budgets.map((budget) => budget.department)));
+export function PurchaseRequestForm({ request }: { request?: PurchaseRequest }) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const isEditing = Boolean(request);
 
-export function PurchaseRequestForm() {
+  const departmentsQuery = useQuery({
+    queryKey: ['master-data', 'departments', 'pr-options'],
+    queryFn: () => fetchMasterData('departments', { page: 1, limit: 100, isActive: true }),
+  });
+
+  const itemsQuery = useQuery({
+    queryKey: ['master-data', 'items', 'pr-options'],
+    queryFn: () => fetchMasterData('items', { page: 1, limit: 100, isActive: true }),
+  });
+
   const {
     control,
     register,
     setValue,
     handleSubmit,
-    formState: { errors, isSubmitting },
+    reset,
+    setError,
+    formState: { errors },
   } = useForm<PurchaseRequestFormInput, unknown, PurchaseRequestFormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       title: '',
-      department: departments[0],
-      budgetId: budgets[0]?.id ?? '',
-      requiredDate: '2026-05-20',
-      items: [{ itemId: requestItemOptions[0].id, quantity: 1, estimatedPrice: requestItemOptions[0].estimatedPrice }],
+      description: '',
+      departmentId: '',
+      budgetId: '',
+      requiredDate: '',
+      items: [{ itemId: '', packagingUnitId: '', quantity: 1, estimatedUnitPrice: 0 }],
     },
   });
 
-  const { fields, append, remove } = useFieldArray({ control, name: 'items' });
-  const watchedDepartment = useWatch({ control, name: 'department' });
+  const { fields, append, remove, replace } = useFieldArray({ control, name: 'items' });
+  const watchedDepartmentId = useWatch({ control, name: 'departmentId' });
   const watchedBudgetId = useWatch({ control, name: 'budgetId' });
   const watchedItems = useWatch({ control, name: 'items' });
-  const availableBudgets = budgets.filter((budget) => budget.department === watchedDepartment);
-  const selectedBudget = budgets.find((budget) => budget.id === watchedBudgetId) ?? availableBudgets[0];
+
+  const budgetsQuery = useQuery({
+    queryKey: ['budgets', 'pr-options', watchedDepartmentId],
+    queryFn: () =>
+      fetchBudgets({
+        page: 1,
+        limit: 100,
+        departmentId: watchedDepartmentId,
+        status: 'ACTIVE',
+      }),
+    enabled: Boolean(watchedDepartmentId),
+  });
+
+  const itemOptions = useMemo(() => itemsQuery.data?.data ?? [], [itemsQuery.data?.data]);
+  const departments = useMemo(() => departmentsQuery.data?.data ?? [], [departmentsQuery.data?.data]);
+  const availableBudgets = useMemo(() => budgetsQuery.data?.data ?? [], [budgetsQuery.data?.data]);
+  const selectedBudget = availableBudgets.find((budget) => budget.id === watchedBudgetId);
   const remainingBudget = selectedBudget ? getRemainingBudget(selectedBudget) : 0;
   const grandTotal = getRequestTotal(
     (watchedItems ?? []).map((item) => ({
       quantity: Number(item?.quantity) || 0,
-      estimatedPrice: Number(item?.estimatedPrice) || 0,
+      estimatedUnitPrice: Number(item?.estimatedUnitPrice) || 0,
     })),
   );
-  const isOverBudget = grandTotal > remainingBudget;
+  const isOverBudget = selectedBudget ? grandTotal > remainingBudget : false;
+  const isOptionsLoading = departmentsQuery.isLoading || itemsQuery.isLoading || budgetsQuery.isLoading;
+  const optionsError = departmentsQuery.error ?? itemsQuery.error ?? budgetsQuery.error;
 
-  function onSubmit(values: PurchaseRequestFormValues, action: 'draft' | 'submit') {
-    console.info('Dummy purchase request action', action, values);
+  const firstItemDefaults = useMemo(() => {
+    const item = itemOptions[0];
+
+    return {
+      itemId: item?.id ?? '',
+      packagingUnitId: item?.defaultPackagingUnitId ?? '',
+      quantity: 1,
+      estimatedUnitPrice: Number(item?.estimatedUnitPrice ?? 0),
+    };
+  }, [itemOptions]);
+
+  useEffect(() => {
+    if (request) {
+      reset({
+        title: request.title,
+        description: request.description ?? '',
+        departmentId: request.departmentId,
+        budgetId: request.budgetId ?? '',
+        requiredDate: request.requiredDate ?? '',
+        items: request.items.length
+          ? request.items.map((item) => ({
+              itemId: item.itemId,
+              packagingUnitId: item.packagingUnitId,
+              quantity: item.quantity,
+              estimatedUnitPrice: item.estimatedUnitPrice,
+            }))
+          : [firstItemDefaults],
+      });
+      return;
+    }
+
+    if (!departments.length || !itemOptions.length) {
+      return;
+    }
+
+    reset((current) => ({
+      ...current,
+      departmentId: current.departmentId || departments[0].id,
+      items: current.items?.[0]?.itemId ? current.items : [firstItemDefaults],
+    }));
+  }, [departments, firstItemDefaults, itemOptions.length, request, reset]);
+
+  useEffect(() => {
+    if (!watchedDepartmentId || !availableBudgets.length || watchedBudgetId) {
+      return;
+    }
+
+    setValue('budgetId', availableBudgets[0].id, { shouldValidate: true });
+  }, [availableBudgets, setValue, watchedBudgetId, watchedDepartmentId]);
+
+  const saveMutation = useMutation({
+    mutationFn: async ({ values, action }: { values: PurchaseRequestFormValues; action: SubmitAction }) => {
+      const payload = toPayload(values);
+      const savedRequest = request
+        ? await updatePurchaseRequest(request.id, payload)
+        : await createPurchaseRequest(payload);
+
+      if (action === 'submit') {
+        return submitPurchaseRequest(savedRequest.id, values.budgetId);
+      }
+
+      return savedRequest;
+    },
+    onSuccess: async (savedRequest, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ['purchase-requests'] });
+      await queryClient.invalidateQueries({ queryKey: ['budgets'] });
+      showSuccessToast(variables.action === 'submit' ? 'Purchase request submitted successfully.' : 'Purchase request saved as draft.');
+      router.replace(`/purchase-requests/${savedRequest.id}`);
+    },
+    onError: (error, variables) => {
+      const message = getApiErrorMessage(
+        error,
+        variables.action === 'submit' ? 'Unable to submit purchase request.' : 'Unable to save purchase request.',
+      );
+      setError('root', { message });
+      showErrorToast(error, message);
+    },
+  });
+
+  function handleAction(values: PurchaseRequestFormValues, action: SubmitAction) {
+    saveMutation.mutate({ values, action });
+  }
+
+  function appendItem() {
+    append(firstItemDefaults);
+  }
+
+  function handleDepartmentChange(value: string) {
+    setValue('departmentId', value, { shouldValidate: true });
+    setValue('budgetId', '', { shouldValidate: true });
+  }
+
+  if (optionsError) {
+    return (
+      <div className="rounded-lg border bg-white p-6 text-sm text-red-600 shadow-sm">
+        {getApiErrorMessage(optionsError, 'Unable to load purchase request form options.')}
+      </div>
+    );
   }
 
   return (
@@ -90,32 +235,23 @@ export function PurchaseRequestForm() {
             <Label>Department</Label>
             <Controller
               control={control}
-              name="department"
+              name="departmentId"
               render={({ field }) => (
-                <Select
-                  value={field.value}
-                  onValueChange={(value) => {
-                    field.onChange(value);
-                    const firstBudget = budgets.find((budget) => budget.department === value);
-                    if (firstBudget) {
-                      setValue('budgetId', firstBudget.id, { shouldValidate: true });
-                    }
-                  }}
-                >
+                <Select value={field.value} onValueChange={handleDepartmentChange} disabled={isOptionsLoading}>
                   <SelectTrigger className="mt-2">
-                    <SelectValue />
+                    <SelectValue placeholder="Select department" />
                   </SelectTrigger>
                   <SelectContent>
                     {departments.map((department) => (
-                      <SelectItem key={department} value={department}>
-                        {department}
+                      <SelectItem key={department.id} value={department.id}>
+                        {department.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               )}
             />
-            {errors.department ? <p className="mt-2 text-xs text-red-600">{errors.department.message}</p> : null}
+            {errors.departmentId ? <p className="mt-2 text-xs text-red-600">{errors.departmentId.message}</p> : null}
           </div>
 
           <div>
@@ -130,14 +266,14 @@ export function PurchaseRequestForm() {
               control={control}
               name="budgetId"
               render={({ field }) => (
-                <Select value={field.value} onValueChange={field.onChange}>
+                <Select value={field.value} onValueChange={field.onChange} disabled={!watchedDepartmentId || budgetsQuery.isLoading}>
                   <SelectTrigger className="mt-2">
-                    <SelectValue />
+                    <SelectValue placeholder="Select budget" />
                   </SelectTrigger>
                   <SelectContent>
                     {availableBudgets.map((budget) => (
                       <SelectItem key={budget.id} value={budget.id}>
-                        {budget.code} - {budget.period}
+                        {budget.code} - {budget.period ?? budget.fiscalYear}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -147,7 +283,12 @@ export function PurchaseRequestForm() {
             {errors.budgetId ? <p className="mt-2 text-xs text-red-600">{errors.budgetId.message}</p> : null}
           </div>
 
-          <BudgetAmount label="Budget Remaining" value={formatCurrency(remainingBudget)} />
+          <div className="lg:col-span-2">
+            <Label htmlFor="description">Description</Label>
+            <Input id="description" className="mt-2" placeholder="Optional request description" {...register('description')} />
+          </div>
+
+          <BudgetAmount label="Budget Remaining" value={selectedBudget ? formatCurrency(remainingBudget) : '-'} />
           <BudgetAmount label="Request Total" value={formatCurrency(grandTotal)} highlight={isOverBudget} />
         </CardContent>
       </Card>
@@ -162,19 +303,17 @@ export function PurchaseRequestForm() {
         </div>
       ) : null}
 
+      {errors.root?.message ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{errors.root.message}</div>
+      ) : null}
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
             <CardTitle>Request Items</CardTitle>
             <CardDescription>Add multiple items and review calculated subtotals.</CardDescription>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() =>
-              append({ itemId: requestItemOptions[0].id, quantity: 1, estimatedPrice: requestItemOptions[0].estimatedPrice })
-            }
-          >
+          <Button type="button" variant="outline" onClick={appendItem} disabled={!itemOptions.length}>
             <Plus className="h-4 w-4" />
             Add Item
           </Button>
@@ -182,8 +321,8 @@ export function PurchaseRequestForm() {
         <CardContent className="space-y-4">
           {fields.map((field, index) => {
             const watchedItem = watchedItems?.[index];
-            const selectedItem = requestItemOptions.find((item) => item.id === watchedItem?.itemId);
-            const subtotal = (Number(watchedItem?.quantity) || 0) * (Number(watchedItem?.estimatedPrice) || 0);
+            const selectedItem = itemOptions.find((item) => item.id === watchedItem?.itemId);
+            const subtotal = (Number(watchedItem?.quantity) || 0) * (Number(watchedItem?.estimatedUnitPrice) || 0);
 
             return (
               <div key={field.id} className="grid gap-3 rounded-lg border bg-white p-4 xl:grid-cols-[1.5fr_0.7fr_0.8fr_0.8fr_auto] xl:items-start">
@@ -197,28 +336,31 @@ export function PurchaseRequestForm() {
                         value={itemField.value}
                         onValueChange={(value) => {
                           itemField.onChange(value);
-                          const item = requestItemOptions.find((option) => option.id === value);
-                          if (item) {
-                            setValue(`items.${index}.estimatedPrice`, item.estimatedPrice, { shouldValidate: true });
-                          }
+                          const item = itemOptions.find((option) => option.id === value);
+                          setValue(`items.${index}.packagingUnitId`, item?.defaultPackagingUnitId ?? '', { shouldValidate: true });
+                          setValue(`items.${index}.estimatedUnitPrice`, Number(item?.estimatedUnitPrice ?? 0), { shouldValidate: true });
                         }}
                       >
                         <SelectTrigger className="mt-2">
-                          <SelectValue />
+                          <SelectValue placeholder="Select item" />
                         </SelectTrigger>
                         <SelectContent>
-                          {requestItemOptions.map((item) => (
+                          {itemOptions.map((item) => (
                             <SelectItem key={item.id} value={item.id}>
-                              {item.sku} - {item.name}
+                              {item.code} - {item.name}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     )}
                   />
-                  <p className="mt-1 text-xs text-slate-500">{selectedItem ? `${selectedItem.name} (${selectedItem.unit})` : 'Select an item'}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {selectedItem ? `${selectedItem.name} (${selectedItem.location})` : 'Select an item'}
+                  </p>
                   {errors.items?.[index]?.itemId ? <p className="mt-2 text-xs text-red-600">{errors.items[index]?.itemId?.message}</p> : null}
                 </div>
+
+                <input type="hidden" {...register(`items.${index}.packagingUnitId`)} />
 
                 <div>
                   <Label htmlFor={`quantity-${field.id}`}>Quantity</Label>
@@ -228,9 +370,9 @@ export function PurchaseRequestForm() {
 
                 <div>
                   <Label htmlFor={`price-${field.id}`}>Estimated Price</Label>
-                  <Input id={`price-${field.id}`} type="number" min="0" className="mt-2" {...register(`items.${index}.estimatedPrice`)} />
-                  {errors.items?.[index]?.estimatedPrice ? (
-                    <p className="mt-2 text-xs text-red-600">{errors.items[index]?.estimatedPrice?.message}</p>
+                  <Input id={`price-${field.id}`} type="number" min="0" className="mt-2" {...register(`items.${index}.estimatedUnitPrice`)} />
+                  {errors.items?.[index]?.estimatedUnitPrice ? (
+                    <p className="mt-2 text-xs text-red-600">{errors.items[index]?.estimatedUnitPrice?.message}</p>
                   ) : null}
                 </div>
 
@@ -248,7 +390,14 @@ export function PurchaseRequestForm() {
                   className="mt-7"
                   aria-label="Remove item row"
                   disabled={fields.length === 1}
-                  onClick={() => remove(index)}
+                  onClick={() => {
+                    if (fields.length === 1) {
+                      replace([firstItemDefaults]);
+                      return;
+                    }
+
+                    remove(index);
+                  }}
                 >
                   <Trash2 className="h-4 w-4 text-red-600" />
                 </Button>
@@ -267,17 +416,36 @@ export function PurchaseRequestForm() {
       </Card>
 
       <div className="flex flex-col-reverse gap-3 border-t pt-4 sm:flex-row sm:justify-end">
-        <Button type="button" variant="outline" disabled={isSubmitting} onClick={handleSubmit((values) => onSubmit(values, 'draft'))}>
+        <Button type="button" variant="outline" disabled={saveMutation.isPending} onClick={handleSubmit((values) => handleAction(values, 'draft'))}>
           <Save className="h-4 w-4" />
-          Save as Draft
+          {saveMutation.isPending ? 'Saving...' : 'Save as Draft'}
         </Button>
-        <Button type="button" disabled={isSubmitting} onClick={handleSubmit((values) => onSubmit(values, 'submit'))}>
+        <Button type="button" disabled={saveMutation.isPending} onClick={handleSubmit((values) => handleAction(values, 'submit'))}>
           <Send className="h-4 w-4" />
-          Submit Request
+          {saveMutation.isPending ? 'Submitting...' : 'Submit Request'}
         </Button>
       </div>
     </form>
   );
+}
+
+function toPayload(values: PurchaseRequestFormValues): PurchaseRequestPayload {
+  return {
+    title: values.title,
+    description: values.description,
+    priority: 'NORMAL',
+    requiredDate: values.requiredDate,
+    departmentId: values.departmentId,
+    budgetId: values.budgetId,
+    items: values.items.map(
+      (item): PurchaseRequestItemPayload => ({
+        itemId: item.itemId,
+        packagingUnitId: item.packagingUnitId,
+        quantity: item.quantity,
+        estimatedUnitPrice: item.estimatedUnitPrice,
+      }),
+    ),
+  };
 }
 
 function BudgetAmount({ label, value, highlight = false }: { label: string; value: string; highlight?: boolean }) {

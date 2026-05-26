@@ -21,7 +21,8 @@ export class ItemsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List items with pagination, search, and filters. Admin only.' })
+  @Roles(AppRole.Admin, AppRole.Requester)
+  @ApiOperation({ summary: 'List items with pagination, search, and filters. Admin or Requester only.' })
   findAll(@Query() query: ItemQueryDto) {
     return this.itemsService.findAll(query);
   }

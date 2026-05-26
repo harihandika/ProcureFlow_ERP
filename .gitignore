@@ -1,7 +1,25 @@
-node_modules
-dist
-coverage
+# dependencies
+node_modules/
+
+# build outputs
+dist/
+build/
+out/
+.next/
+apps/**/.next/
+
+# test and coverage output
+coverage/
+test-results/
+playwright-report/
+*.tsbuildinfo
+
+# local environment files
 .env
 .env.*
 !.env.example
+!.env.test.example
+
+# logs
 *.log
+*.err

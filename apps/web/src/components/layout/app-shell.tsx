@@ -81,7 +81,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <div className="max-w-48 truncate text-xs text-slate-500">{roleDisplay}</div>
                 </div>
               </div>
-              <Button variant="ghost" size="icon" aria-label="Logout" onClick={handleLogout}>
+              <Button variant="ghost" size="icon" aria-label="Logout" data-testid="logout-button" onClick={handleLogout}>
                 <LogOut className="h-5 w-5" />
               </Button>
             </div>
@@ -105,10 +105,27 @@ function getInitials(name: string) {
     .join('');
 }
 
-function normalizeUserRoles(roles: string[]): UserRole[] {
+function normalizeUserRoles(roles: unknown): UserRole[] {
   const allowedRoles = new Set<UserRole>(roleOptions);
 
-  return roles.map((role) => role.toUpperCase() as UserRole).filter((role) => allowedRoles.has(role));
+  if (!Array.isArray(roles)) {
+    return [];
+  }
+
+  return roles
+    .map((role) => {
+      if (typeof role === 'string') {
+        return role;
+      }
+
+      if (role && typeof role === 'object' && 'name' in role && typeof role.name === 'string') {
+        return role.name;
+      }
+
+      return '';
+    })
+    .map((role) => role.toUpperCase() as UserRole)
+    .filter((role) => allowedRoles.has(role));
 }
 
 function SidebarContent({ pathname, items }: { pathname: string; items: NavigationItem[] }) {
@@ -133,6 +150,7 @@ function SidebarContent({ pathname, items }: { pathname: string; items: Navigati
             <Link
               key={item.href}
               href={item.href}
+              data-testid={`nav-${item.href.replace(/^\//, '').replace(/\//g, '-') || 'dashboard'}`}
               className={cn(
                 'flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-900 hover:text-white',
                 active && 'bg-blue-600 text-white hover:bg-blue-600',

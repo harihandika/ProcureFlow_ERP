@@ -25,7 +25,8 @@ export class BudgetsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List budgets with pagination, search, and filters. Admin or Finance only.' })
+  @Roles(AppRole.Admin, AppRole.Finance, AppRole.Requester)
+  @ApiOperation({ summary: 'List budgets with pagination, search, and filters. Admin, Finance, or Requester only.' })
   findAll(@Query() query: BudgetQueryDto) {
     return this.budgetsService.findAll(query);
   }

@@ -1,70 +1,144 @@
 'use client';
 
-import { useState } from 'react';
-import { RefreshCw, Send } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Loader2, Send } from 'lucide-react';
 import { ErpSyncStatusBadge, POStatusBadge } from '@/components/purchase-orders/purchase-order-badges';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import type { ErpSyncStatus, PurchaseOrder, PurchaseOrderStatus } from '@/lib/purchase-order-data';
-import { getPurchaseOrderTotal } from '@/lib/purchase-order-data';
+import { getApiErrorMessage } from '@/lib/api-error';
+import {
+  fetchPurchaseOrder,
+  getErpSyncStatusLabel,
+  getPurchaseOrderStatusLabel,
+  updatePurchaseOrderStatus,
+  type PurchaseOrder,
+  type PurchaseOrderStatus,
+} from '@/lib/purchase-order-api';
+import { showErrorToast, showSuccessToast } from '@/lib/toast';
 import { formatCurrency } from '@/lib/utils';
 
-export function PurchaseOrderDetail({ order }: { order: PurchaseOrder }) {
-  const [status, setStatus] = useState<PurchaseOrderStatus>(order.status);
-  const [erpSyncStatus, setErpSyncStatus] = useState<ErpSyncStatus>(order.erpSyncStatus);
-  const [sentAt, setSentAt] = useState(order.sentAt);
-  const [syncedAt, setSyncedAt] = useState(order.syncedAt);
-  const total = getPurchaseOrderTotal(order.items);
+const editableStatuses: PurchaseOrderStatus[] = ['DRAFT', 'ISSUED', 'CANCELLED'];
 
-  function sendToSupplier() {
-    setStatus('Sent');
-    setSentAt('2026-05-12 15:00');
+export function PurchaseOrderDetail({ orderId }: { orderId: string }) {
+  const queryClient = useQueryClient();
+  const queryKey = ['purchase-orders', orderId] as const;
+
+  const purchaseOrderQuery = useQuery({
+    queryKey,
+    queryFn: () => fetchPurchaseOrder(orderId),
+  });
+
+  const statusMutation = useMutation({
+    mutationFn: (status: PurchaseOrderStatus) => updatePurchaseOrderStatus(orderId, status),
+    onSuccess: (purchaseOrder) => {
+      queryClient.setQueryData(queryKey, purchaseOrder);
+      void queryClient.invalidateQueries({ queryKey: ['purchase-orders'] });
+      showSuccessToast('Purchase order status updated.');
+    },
+    onError: (error) => {
+      showErrorToast(error, 'Unable to update purchase order status.');
+    },
+  });
+
+  if (purchaseOrderQuery.isLoading) {
+    return (
+      <Card>
+        <CardContent className="flex min-h-[260px] items-center justify-center text-sm text-slate-500">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Loading purchase order detail...
+        </CardContent>
+      </Card>
+    );
   }
 
-  function syncToErp() {
-    setErpSyncStatus('Success');
-    setSyncedAt('2026-05-12 15:05');
+  if (purchaseOrderQuery.isError) {
+    return (
+      <Card>
+        <CardContent className="flex min-h-[260px] items-center justify-center text-sm text-red-600">
+          {getApiErrorMessage(purchaseOrderQuery.error, 'Unable to load purchase order detail.')}
+        </CardContent>
+      </Card>
+    );
   }
 
+  if (!purchaseOrderQuery.data) {
+    return (
+      <Card>
+        <CardContent className="flex min-h-[260px] items-center justify-center text-sm text-slate-500">
+          Purchase order was not found.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return <PurchaseOrderDetailContent order={purchaseOrderQuery.data} isUpdating={statusMutation.isPending} onStatusChange={statusMutation.mutate} />;
+}
+
+function PurchaseOrderDetailContent({
+  order,
+  isUpdating,
+  onStatusChange,
+}: {
+  order: PurchaseOrder;
+  isUpdating: boolean;
+  onStatusChange: (status: PurchaseOrderStatus) => void;
+}) {
   return (
     <div className="space-y-6">
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <DetailMetric label="Supplier" value={order.supplierName} />
-        <DetailMetric label="Warehouse" value={order.warehouse} />
-        <DetailMetric label="Expected Delivery" value={order.expectedDeliveryDate} />
-        <DetailMetric label="Total Amount" value={formatCurrency(total)} />
+        <DetailMetric label="Supplier" value={order.supplier.name} />
+        <DetailMetric label="Warehouse" value={order.warehouse.name} />
+        <DetailMetric label="Expected Delivery" value={order.expectedDeliveryDate ?? '-'} />
+        <DetailMetric label="Total Amount" value={formatCurrency(order.totalAmount)} />
       </section>
 
       <Card>
         <CardHeader className="border-b">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <CardTitle>{order.poNo}</CardTitle>
-              <CardDescription>Generated from {order.prNo}</CardDescription>
+              <CardTitle>{order.poNumber}</CardTitle>
+              <CardDescription>
+                Generated from {order.purchaseRequest?.requestNumber ?? '-'} - {order.purchaseRequest?.title ?? 'No PR title'}
+              </CardDescription>
               <div className="mt-3 flex flex-wrap gap-2">
-                <POStatusBadge status={status} />
-                <ErpSyncStatusBadge status={erpSyncStatus} />
+                <POStatusBadge status={getPurchaseOrderStatusLabel(order.status)} />
+                <ErpSyncStatusBadge status={getErpSyncStatusLabel(order.erpSyncStatus)} />
               </div>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <Button variant="outline" disabled={status === 'Sent' || status === 'Completed'} onClick={sendToSupplier}>
-                <Send className="h-4 w-4" />
+              <Select value={order.status} disabled={isUpdating} onValueChange={(value) => onStatusChange(value as PurchaseOrderStatus)}>
+                <SelectTrigger className="w-full sm:w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {editableStatuses.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {getPurchaseOrderStatusLabel(status)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                disabled={isUpdating || order.status === 'ISSUED' || order.status === 'CANCELLED'}
+                onClick={() => onStatusChange('ISSUED')}
+              >
+                {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 Send to Supplier
-              </Button>
-              <Button disabled={erpSyncStatus === 'Success'} onClick={syncToErp}>
-                <RefreshCw className="h-4 w-4" />
-                Sync to ERP
               </Button>
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4 pt-5">
           <div className="grid gap-3 text-sm md:grid-cols-2">
-            <InfoLine label="Created At" value={order.createdAt} />
-            <InfoLine label="Sent At" value={sentAt ?? 'Not sent'} />
-            <InfoLine label="ERP Synced At" value={syncedAt ?? 'Not synced'} />
-            <InfoLine label="Supplier Contact" value="sales demo contact" />
+            <InfoLine label="Created At" value={formatDateTime(order.createdAt)} />
+            <InfoLine label="Issued At" value={order.issueDate ?? 'Not issued'} />
+            <InfoLine label="ERP Synced At" value={order.syncedAt ? formatDateTime(order.syncedAt) : 'Not synced'} />
+            <InfoLine label="Supplier Contact" value={order.supplier.email ?? order.supplier.contactName ?? order.supplier.phone ?? '-'} />
+            <InfoLine label="PR Requester" value={order.purchaseRequest?.requester?.fullName ?? '-'} />
+            <InfoLine label="PR Department" value={order.purchaseRequest?.department?.name ?? '-'} />
           </div>
         </CardContent>
       </Card>
@@ -89,15 +163,22 @@ export function PurchaseOrderDetail({ order }: { order: PurchaseOrder }) {
               </TableHeader>
               <TableBody>
                 {order.items.map((item) => (
-                  <TableRow key={`${order.id}-${item.sku}`}>
+                  <TableRow key={item.id}>
                     <TableCell className="font-medium text-slate-900">{item.sku}</TableCell>
                     <TableCell>{item.name}</TableCell>
                     <TableCell>{item.unit}</TableCell>
-                    <TableCell className="text-right">{item.quantity}</TableCell>
+                    <TableCell className="text-right">{item.quantityOrdered}</TableCell>
                     <TableCell className="text-right">{formatCurrency(item.unitPrice)}</TableCell>
-                    <TableCell className="text-right font-medium">{formatCurrency(item.quantity * item.unitPrice)}</TableCell>
+                    <TableCell className="text-right font-medium">{formatCurrency(item.lineTotal)}</TableCell>
                   </TableRow>
                 ))}
+                {!order.items.length ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="h-20 text-center text-slate-500">
+                      No items are attached to this purchase order.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
               </TableBody>
             </Table>
           </div>
@@ -125,4 +206,20 @@ function InfoLine({ label, value }: { label: string; value: string }) {
       <div className="mt-1 font-semibold text-slate-950">{value}</div>
     </div>
   );
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
 }

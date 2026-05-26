@@ -1,14 +1,28 @@
+'use client';
+
 import Link from 'next/link';
-import { Plus, PackageCheck } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { ArrowUpRight, Loader2, PackageCheck, Plus } from 'lucide-react';
 import { ReceivingStatusBadge } from '@/components/receiving/receiving-status-badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { receivingRecords } from '@/lib/receiving-data';
+import { getApiErrorMessage } from '@/lib/api-error';
+import {
+  fetchReceivingRecords,
+  getReceivingStatusLabel,
+  type ReceivingRecord,
+} from '@/lib/receiving-api';
 
 export default function ReceivingPage() {
-  const partialCount = receivingRecords.filter((record) => record.status === 'Partial').length;
-  const fullCount = receivingRecords.filter((record) => record.status === 'Full').length;
+  const receivingQuery = useQuery({
+    queryKey: ['receiving', 'list', { page: 1, limit: 50 }],
+    queryFn: () => fetchReceivingRecords({ page: 1, limit: 50 }),
+  });
+
+  const receivingRecords = receivingQuery.data?.data ?? [];
+  const partialCount = receivingRecords.filter((record) => record.status === 'PARTIAL').length;
+  const fullCount = receivingRecords.filter((record) => record.status === 'FULL').length;
 
   return (
     <div className="space-y-6">
@@ -16,7 +30,7 @@ export default function ReceivingPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-normal text-slate-950">Receiving</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Record partial or full goods receiving against issued purchase orders using dummy data.
+            Record partial or full goods receiving against purchase orders.
           </p>
         </div>
         <Button asChild>
@@ -28,7 +42,7 @@ export default function ReceivingPage() {
       </div>
 
       <section className="grid gap-4 md:grid-cols-3">
-        <SummaryCard label="Receiving Records" value={String(receivingRecords.length)} caption="Dummy GRN history" />
+        <SummaryCard label="Receiving Records" value={String(receivingQuery.data?.meta.total ?? receivingRecords.length)} caption="GRN history from backend" />
         <SummaryCard label="Partial" value={String(partialCount)} caption="PO still has remaining quantity" />
         <SummaryCard label="Full" value={String(fullCount)} caption="PO quantity fulfilled" />
       </section>
@@ -55,25 +69,37 @@ export default function ReceivingPage() {
                   <TableHead>Status</TableHead>
                   <TableHead>Received By</TableHead>
                   <TableHead>Received At</TableHead>
+                  <TableHead className="w-[90px] text-right">Detail</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {receivingRecords.map((record) => (
-                  <TableRow key={record.id}>
-                    <TableCell>
-                      <div className="font-medium text-slate-900">{record.receivingNo}</div>
-                      <div className="text-xs text-slate-500">{record.deliveryNoteNo}</div>
+                {receivingQuery.isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="h-24 text-center text-slate-500">
+                      <span className="inline-flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading receiving records...
+                      </span>
                     </TableCell>
-                    <TableCell>{record.poNo}</TableCell>
-                    <TableCell>{record.supplierName}</TableCell>
-                    <TableCell>{record.warehouse}</TableCell>
-                    <TableCell>
-                      <ReceivingStatusBadge status={record.status} />
-                    </TableCell>
-                    <TableCell>{record.receivedBy}</TableCell>
-                    <TableCell>{record.receivedAt}</TableCell>
                   </TableRow>
-                ))}
+                ) : null}
+                {receivingQuery.isError ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="h-24 text-center text-red-600">
+                      {getApiErrorMessage(receivingQuery.error, 'Unable to load receiving records.')}
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+                {!receivingQuery.isLoading && !receivingQuery.isError
+                  ? receivingRecords.map((record) => <ReceivingRow key={record.id} record={record} />)
+                  : null}
+                {!receivingQuery.isLoading && !receivingQuery.isError && !receivingRecords.length ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="h-24 text-center text-slate-500">
+                      No receiving records have been created yet.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
               </TableBody>
             </Table>
           </div>
@@ -94,7 +120,8 @@ export default function ReceivingPage() {
                   <TableHead>SKU</TableHead>
                   <TableHead className="min-w-[240px]">Item</TableHead>
                   <TableHead className="text-right">Ordered</TableHead>
-                  <TableHead className="text-right">Received This GRN</TableHead>
+                  <TableHead className="text-right">Received Total</TableHead>
+                  <TableHead className="text-right">This GRN</TableHead>
                   <TableHead className="text-right">Accepted</TableHead>
                   <TableHead className="text-right">Rejected</TableHead>
                 </TableRow>
@@ -102,28 +129,61 @@ export default function ReceivingPage() {
               <TableBody>
                 {receivingRecords.flatMap((record) =>
                   record.items.map((item) => (
-                    <TableRow key={`${record.id}-${item.sku}`}>
-                      <TableCell className="font-medium text-slate-900">{record.receivingNo}</TableCell>
+                    <TableRow key={`${record.id}-${item.id}`}>
+                      <TableCell className="font-medium text-slate-900">{record.receivingNumber}</TableCell>
                       <TableCell>{item.sku}</TableCell>
                       <TableCell>{item.name}</TableCell>
                       <TableCell className="text-right">{item.orderedQuantity}</TableCell>
                       <TableCell className="text-right">
                         <div className="font-medium">
-                          {item.previouslyReceived + item.receivedQuantity} / {item.orderedQuantity}
+                          {item.poQuantityReceived} / {item.orderedQuantity}
                         </div>
-                        <div className="text-xs text-slate-500">this GRN {item.receivedQuantity}</div>
                       </TableCell>
+                      <TableCell className="text-right">{item.receivedQuantity}</TableCell>
                       <TableCell className="text-right">{item.acceptedQuantity}</TableCell>
                       <TableCell className="text-right">{item.rejectedQuantity}</TableCell>
                     </TableRow>
                   )),
                 )}
+                {!receivingQuery.isLoading && !receivingQuery.isError && !receivingRecords.length ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="h-24 text-center text-slate-500">
+                      No receiving line history is available.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
               </TableBody>
             </Table>
           </div>
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function ReceivingRow({ record }: { record: ReceivingRecord }) {
+  return (
+    <TableRow>
+      <TableCell>
+        <div className="font-medium text-slate-900">{record.receivingNumber}</div>
+        <div className="text-xs text-slate-500">{record.deliveryNoteNo ?? '-'}</div>
+      </TableCell>
+      <TableCell>{record.purchaseOrder.poNumber}</TableCell>
+      <TableCell>{record.purchaseOrder.supplier?.name ?? '-'}</TableCell>
+      <TableCell>{record.warehouse.name}</TableCell>
+      <TableCell>
+        <ReceivingStatusBadge status={getReceivingStatusLabel(record.status)} />
+      </TableCell>
+      <TableCell>{record.receivedBy?.fullName ?? '-'}</TableCell>
+      <TableCell>{formatDateTime(record.receivedAt)}</TableCell>
+      <TableCell className="text-right">
+        <Button asChild variant="ghost" size="icon" aria-label={`View ${record.receivingNumber}`}>
+          <Link href={`/receiving/${record.id}`}>
+            <ArrowUpRight className="h-4 w-4" />
+          </Link>
+        </Button>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -139,4 +199,20 @@ function SummaryCard({ label, value, caption }: { label: string; value: string; 
       </CardContent>
     </Card>
   );
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value || '-';
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
 }
