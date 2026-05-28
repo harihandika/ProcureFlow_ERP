@@ -12,18 +12,18 @@ ProcureFlow ERP solves this problem by providing a structured procurement workfl
 
 ## Key Features
 
-| Area | Features |
-| --- | --- |
-| Authentication | JWT login, protected routes, role-based sidebar |
-| Master Data | Departments, items, suppliers, warehouses, packaging units |
-| Budget Control | Allocation, used amount, remaining amount, usage warnings |
-| Purchase Request | Multi-item PR, frontend calculation, budget validation |
-| Approval Workflow | Manager/Finance approval queue, approve/reject actions |
-| Purchase Order | Generate PO from approved PR, supplier assignment, status tracking |
-| Receiving | Partial and full receiving, barcode/item code simulation |
-| ERP Sync | Mock ERP sync, success/failure logs, retry failed sync |
-| Audit Trail | Important actions recorded with old/new values where available |
-| Dashboard | Procurement summary cards and charts |
+| Area              | Features                                                           |
+| ----------------- | ------------------------------------------------------------------ |
+| Authentication    | JWT login, protected routes, role-based sidebar                    |
+| Master Data       | Departments, items, suppliers, warehouses, packaging units         |
+| Budget Control    | Allocation, used amount, remaining amount, usage warnings          |
+| Purchase Request  | Multi-item PR, frontend calculation, budget validation             |
+| Approval Workflow | Manager/Finance approval queue, approve/reject actions             |
+| Purchase Order    | Generate PO from approved PR, supplier assignment, status tracking |
+| Receiving         | Partial and full receiving, barcode/item code simulation           |
+| ERP Sync          | Mock ERP sync, success/failure logs, retry failed sync             |
+| Audit Trail       | Important actions recorded with old/new values where available     |
+| Dashboard         | Procurement summary cards and charts                               |
 
 ## Tech Stack
 
@@ -84,15 +84,15 @@ flowchart LR
 
 ## Role Summary
 
-| Role | Main Responsibility |
-| --- | --- |
-| Admin | System setup, users, roles, master data, audit review |
-| Requester | Create and submit purchase requests |
-| Manager | Review and approve/reject purchase requests |
-| Finance | Manage budgets and approve budget-related requests |
-| Purchasing | Generate purchase orders and sync to ERP |
-| Warehouse | Record goods receiving |
-| Auditor | Review audit trail and business activity history |
+| Role       | Main Responsibility                                   |
+| ---------- | ----------------------------------------------------- |
+| Admin      | System setup, users, roles, master data, audit review |
+| Requester  | Create and submit purchase requests                   |
+| Manager    | Review and approve/reject purchase requests           |
+| Finance    | Manage budgets and approve budget-related requests    |
+| Purchasing | Generate purchase orders and sync to ERP              |
+| Warehouse  | Record goods receiving                                |
+| Auditor    | Review audit trail and business activity history      |
 
 ## Project Modules
 
@@ -116,26 +116,26 @@ flowchart LR
 
 Screenshots can be added here when the project is deployed.
 
-| Page | Screenshot |
-| --- | --- |
-| Dashboard | `docs/screenshots/dashboard.png` |
+| Page              | Screenshot                               |
+| ----------------- | ---------------------------------------- |
+| Dashboard         | `docs/screenshots/dashboard.png`         |
 | Purchase Requests | `docs/screenshots/purchase-requests.png` |
-| Approval Queue | `docs/screenshots/approvals.png` |
-| Purchase Orders | `docs/screenshots/purchase-orders.png` |
-| Receiving | `docs/screenshots/receiving.png` |
-| Audit Trail | `docs/screenshots/audit-trails.png` |
+| Approval Queue    | `docs/screenshots/approvals.png`         |
+| Purchase Orders   | `docs/screenshots/purchase-orders.png`   |
+| Receiving         | `docs/screenshots/receiving.png`         |
+| Audit Trail       | `docs/screenshots/audit-trails.png`      |
 
 ## Demo Accounts
 
-| Role | Email | Password |
-| --- | --- | --- |
-| Admin | `admin@procureflow.com` | `password123` |
-| Requester | `requester@procureflow.com` | `password123` |
-| Manager | `manager@procureflow.com` | `password123` |
-| Finance | `finance@procureflow.com` | `password123` |
-| Purchasing | `purchasing@procureflow.com` | `password123` |
-| Warehouse | `warehouse@procureflow.com` | `password123` |
-| Auditor | `auditor@procureflow.com` | `password123` |
+| Role       | Email                        | Password       |
+| ---------- | ---------------------------- | -------------- |
+| Admin      | `admin@procureflow.test`     | `Password123!` |
+| Requester  | `requester@procureflow.com`  | `password123`  |
+| Manager    | `manager@procureflow.com`    | `password123`  |
+| Finance    | `finance@procureflow.com`    | `password123`  |
+| Purchasing | `purchasing@procureflow.com` | `password123`  |
+| Warehouse  | `warehouse@procureflow.com`  | `password123`  |
+| Auditor    | `auditor@procureflow.com`    | `password123`  |
 
 Local seeded accounts may use `.test` emails depending on the seed file.
 
@@ -179,10 +179,10 @@ npm run web:dev
 
 Default URLs:
 
-| Service | URL |
-| --- | --- |
-| Frontend | `http://localhost:3000` |
-| Backend API | `http://localhost:3001/api` |
+| Service      | URL                              |
+| ------------ | -------------------------------- |
+| Frontend     | `http://localhost:3000`          |
+| Backend API  | `http://localhost:3001/api`      |
 | Swagger Docs | `http://localhost:3001/api/docs` |
 
 ## Environment Variables Example
@@ -213,22 +213,22 @@ npm run web:test
 npm run test:e2e
 ```
 
-| Command | Purpose |
-| --- | --- |
-| `npm run api:test` | Backend unit tests |
-| `npm run api:test:e2e` | Backend Supertest integration tests |
-| `npm run web:test` | Frontend component and integration tests |
-| `npm run test:e2e` | Playwright browser E2E flow |
+| Command                | Purpose                                  |
+| ---------------------- | ---------------------------------------- |
+| `npm run api:test`     | Backend unit tests                       |
+| `npm run api:test:e2e` | Backend Supertest integration tests      |
+| `npm run web:test`     | Frontend component and integration tests |
+| `npm run test:e2e`     | Playwright browser E2E flow              |
 
 ## Deployment Summary
 
-| Layer | Target |
-| --- | --- |
-| Frontend | Vercel |
-| Backend | Railway |
-| Database | Railway PostgreSQL |
+| Layer            | Target                  |
+| ---------------- | ----------------------- |
+| Frontend         | Vercel                  |
+| Backend          | Railway                 |
+| Database         | Railway PostgreSQL      |
 | Prisma Migration | `prisma migrate deploy` |
-| CI/CD | GitHub Actions |
+| CI/CD            | GitHub Actions          |
 
 Production deployment should run database migrations before starting the backend application.
 
