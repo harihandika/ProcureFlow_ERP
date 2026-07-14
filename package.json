@@ -12,6 +12,8 @@
     "api:test:watch": "npm run test:watch -w @procureflow/api",
     "api:test:e2e": "npm run test:e2e -w @procureflow/api",
     "api:test:cov": "npm run test:cov -w @procureflow/api",
+    "ai:dev": "cd apps/ai && venv\\Scripts\\python main.py",
+    "ai:install": "cd apps/ai && venv\\Scripts\\pip install -r requirements.txt",
     "test:e2e": "playwright test",
     "web:dev": "npm run dev -w @procureflow/web",
     "web:start": "npm run start -w @procureflow/web",

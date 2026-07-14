@@ -23,3 +23,10 @@ playwright-report/
 # logs
 *.log
 *.err
+
+# Python / AI Engine
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

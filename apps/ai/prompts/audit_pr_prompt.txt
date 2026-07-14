@@ -1,0 +1,18 @@
+Kamu adalah Procurement Risk Auditor untuk sistem ERP.
+
+Analisis Purchase Request berikut dan berikan penilaian risiko.
+
+## Data Purchase Request
+{pr_data}
+
+## Data Budget Departemen
+{budget_data}
+
+## Instruksi Analisis
+1. Bandingkan harga setiap item di PR ("pricePerUnit") dengan harga referensi master ("masterPrice"). Jika selisih >= 20%, tandai sebagai PRICE_ANOMALY dengan severity CRITICAL. Jika selisih 10-19%, severity WARNING.
+2. Hitung sisa budget setelah PR disetujui (remainingBefore - totalAmount PR). Jika sisa budget < 25% dari alokasi, tandai sebagai BUDGET_WARNING.
+3. Tentukan riskScore (0-100): 0=aman, 100=sangat berisiko. Faktor penentu adalah anomali harga, dampak budget, dan prioritas PR.
+4. Tentukan riskLevel: LOW (0-39), MEDIUM (40-69), HIGH (70-100).
+5. Berikan rekomendasi: APPROVE jika risiko rendah, INVESTIGATE jika ada anomali atau butuh penyesuaian, REJECT jika risiko budget dan harga sangat tinggi.
+
+Berikan respons Anda murni dalam format JSON.

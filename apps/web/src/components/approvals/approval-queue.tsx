@@ -3,7 +3,7 @@
 import type React from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, ClipboardCheck, FileText, Loader2, Send, ThumbsDown, ThumbsUp, XCircle } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, FileText, Loader2, Send, ThumbsDown, ThumbsUp, XCircle, Sparkles } from 'lucide-react';
 import { StatusBadge, type WorkflowStatus } from '@/components/status-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -31,6 +31,7 @@ import { getApiErrorMessage } from '@/lib/api-error';
 import { getStatusLabel } from '@/lib/purchase-request-api';
 import { showErrorToast, showSuccessToast } from '@/lib/toast';
 import { formatCurrency } from '@/lib/utils';
+import { AiAuditModal } from '@/components/ai/AiAuditModal';
 
 const approvalQueueQueryKey = ['approvals', 'my-queue'] as const;
 const allFilter = 'All';
@@ -45,6 +46,7 @@ export function ApprovalQueue() {
   const [departmentFilter, setDepartmentFilter] = useState(allFilter);
   const [rejectTarget, setRejectTarget] = useState<ApprovalQueueItem | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [auditTarget, setAuditTarget] = useState<ApprovalQueueItem | null>(null);
 
   const queueQuery = useQuery({
     queryKey: approvalQueueQueryKey,
@@ -254,6 +256,7 @@ export function ApprovalQueue() {
             isRejecting={rejectMutation.isPending && rejectMutation.variables?.id === selectedRequest.id}
             onApprove={() => approveMutation.mutate(selectedRequest.id)}
             onReject={() => openRejectModal(selectedRequest)}
+            onAudit={() => setAuditTarget(selectedRequest)}
           />
         ) : (
           <Card>
@@ -272,6 +275,15 @@ export function ApprovalQueue() {
         onOpenChange={(open) => !open && setRejectTarget(null)}
         onConfirm={confirmReject}
       />
+
+      {auditTarget && (
+        <AiAuditModal
+          isOpen={!!auditTarget}
+          onClose={() => setAuditTarget(null)}
+          prId={auditTarget.id}
+          prTitle={`${auditTarget.purchaseRequest.requestNumber} - ${auditTarget.purchaseRequest.title}`}
+        />
+      )}
     </div>
   );
 }
@@ -283,6 +295,7 @@ function PurchaseRequestApprovalDetail({
   isRejecting,
   onApprove,
   onReject,
+  onAudit,
 }: {
   request: ApprovalQueueItem;
   showActions: boolean;
@@ -290,6 +303,7 @@ function PurchaseRequestApprovalDetail({
   isRejecting: boolean;
   onApprove: () => void;
   onReject: () => void;
+  onAudit: () => void;
 }) {
   const purchaseRequest = request.purchaseRequest;
 
@@ -360,6 +374,12 @@ function PurchaseRequestApprovalDetail({
 
         {showActions ? (
           <div className="flex flex-col-reverse gap-3 border-t pt-4 sm:flex-row sm:justify-end">
+            <div className="sm:mr-auto flex flex-col sm:flex-row">
+              <Button variant="outline" className="bg-violet-50 text-violet-700 hover:bg-violet-100 border-violet-200" onClick={onAudit}>
+                <Sparkles className="h-4 w-4 mr-2" />
+                Analisis AI
+              </Button>
+            </div>
             <Button variant="outline" disabled={isApproving || isRejecting} onClick={onReject}>
               {isRejecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ThumbsDown className="h-4 w-4" />}
               Reject
