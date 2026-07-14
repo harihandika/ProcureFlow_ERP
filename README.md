@@ -156,25 +156,29 @@ cd procureflow-erp
 npm install
 ```
 
-Create backend environment file:
+Create environment files for backend and AI engine:
 
 ```bash
 cp apps/api/.env.example apps/api/.env
+cp apps/ai/.env.example apps/ai/.env
 ```
 
-Generate Prisma client and run migrations:
+Generate Prisma client, run migrations, and install AI dependencies:
 
 ```bash
 npm run prisma:generate
 npm run prisma:migrate
 npm run prisma:seed
+npm run ai:install
 ```
 
-Run backend and frontend:
+Run backend, frontend, and AI engine:
 
 ```bash
+# In separate terminal windows or in background
 npm run api:dev
 npm run web:dev
+npm run ai:dev
 ```
 
 Default URLs:
@@ -184,6 +188,7 @@ Default URLs:
 | Frontend     | `http://localhost:3000`          |
 | Backend API  | `http://localhost:3001/api`      |
 | Swagger Docs | `http://localhost:3001/api/docs` |
+| AI Engine    | `http://localhost:8000`          |
 
 ## Environment Variables Example
 
@@ -196,6 +201,14 @@ JWT_EXPIRES_IN="1d"
 FRONTEND_URL="http://localhost:3000"
 BACKEND_URL="http://localhost:3001"
 CORS_ORIGIN="http://localhost:3000"
+```
+
+AI Engine:
+
+```env
+GEMINI_API_KEY="your-gemini-api-key"
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/procureflow_erp"
+PORT=8000
 ```
 
 Frontend:

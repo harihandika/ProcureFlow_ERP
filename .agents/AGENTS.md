@@ -5,6 +5,7 @@ Sistem ERP Procurement dengan arsitektur Monorepo.
 ## Struktur Workspace
 *   **Frontend**: [apps/web](file:///c:/Users/harih/Documents/AI%20+%20Software%20Enggineer/ProcureFlow_ERP/apps/web) (Next.js 15, React 19, Tailwind CSS, TanStack Query)
 *   **Backend**: [apps/api](file:///c:/Users/harih/Documents/AI%20+%20Software%20Enggineer/ProcureFlow_ERP/apps/api) (NestJS, Passport JWT, class-validator)
+*   **AI Engine**: [apps/ai](file:///c:/Users/harih/Documents/AI%20+%20Software%20Enggineer/ProcureFlow_ERP/apps/ai) (Python FastAPI, Google GenAI SDK, Pydantic)
 *   **Database**: [prisma](file:///c:/Users/harih/Documents/AI%20+%20Software%20Enggineer/ProcureFlow_ERP/prisma) (Prisma ORM dengan PostgreSQL)
 *   **Dokumentasi**: [docs](file:///c:/Users/harih/Documents/AI%20+%20Software%20Enggineer/ProcureFlow_ERP/docs) (Alur bisnis, fitur, dan skema database)
 
@@ -16,6 +17,9 @@ Sistem ERP Procurement dengan arsitektur Monorepo.
 5.  **ERP Sync**: Jika sinkronisasi ke Mock ERP gagal, simpan log detail error dan sediakan fitur retry.
 
 ## Standar Kode & Konvensi
-*   Gunakan TypeScript secara ketat. Hindari tipe `any`.
+*   Gunakan TypeScript secara ketat di sisi Frontend & Backend. Hindari tipe `any`.
 *   Gunakan Tailwind CSS untuk antarmuka frontend.
 *   Gunakan DTO (Data Transfer Object) dengan `class-validator` di sisi backend NestJS.
+*   Gunakan Python 3.x dengan `venv` untuk AI microservice.
+*   Gunakan Google GenAI SDK untuk integrasi dengan Gemini API.
+
