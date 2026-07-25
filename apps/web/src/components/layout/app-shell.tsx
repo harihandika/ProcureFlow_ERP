@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Bell, ChevronRight, LogOut, Menu, Search, ShieldCheck } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +25,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const currentPage = useMemo(() => getCurrentPage(pathname), [pathname]);
   const sidebar = <SidebarContent pathname={pathname} items={visibleItems} />;
   const roleDisplay = userRoles.length > 0 ? userRoles.map((role) => roleLabels[role]).join(', ') : 'No role assigned';
+
+  const [searchQuery, setSearchQuery] = useState('');
+
+  function handleSearchSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    const query = searchQuery.trim();
+    const upperQuery = query.toUpperCase();
+
+    if (upperQuery.startsWith('PO-')) {
+      router.push(`/purchase-orders?search=${encodeURIComponent(query)}`);
+    } else if (upperQuery.startsWith('PR-')) {
+      router.push(`/purchase-requests?search=${encodeURIComponent(query)}`);
+    } else if (upperQuery.startsWith('INV-')) {
+      router.push(`/invoices?search=${encodeURIComponent(query)}`);
+    } else if (pathname.includes('/suppliers')) {
+      router.push(`/suppliers?search=${encodeURIComponent(query)}`);
+    } else if (pathname.includes('/items')) {
+      router.push(`/items?search=${encodeURIComponent(query)}`);
+    } else if (pathname.includes('/purchase-orders')) {
+      router.push(`/purchase-orders?search=${encodeURIComponent(query)}`);
+    } else if (pathname.includes('/invoices')) {
+      router.push(`/invoices?search=${encodeURIComponent(query)}`);
+    } else {
+      router.push(`/purchase-requests?search=${encodeURIComponent(query)}`);
+    }
+  }
 
   function handleLogout() {
     logout();
@@ -62,10 +90,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="hidden w-full max-w-sm xl:block">
-              <div className="relative">
+              <form onSubmit={handleSearchSubmit} className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <Input className="pl-9" placeholder="Search records, documents, suppliers" />
-              </div>
+                <Input 
+                  className="pl-9" 
+                  placeholder="Search records, documents, suppliers..." 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </form>
             </div>
 
             <div className="ml-auto flex shrink-0 items-center gap-3">
