@@ -35,12 +35,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const query = searchQuery.trim();
     const upperQuery = query.toUpperCase();
 
-    if (upperQuery.startsWith('PO-')) {
+    if (upperQuery.startsWith('PO')) {
       router.push(`/purchase-orders?search=${encodeURIComponent(query)}`);
-    } else if (upperQuery.startsWith('PR-')) {
+    } else if (upperQuery.startsWith('PR')) {
       router.push(`/purchase-requests?search=${encodeURIComponent(query)}`);
-    } else if (upperQuery.startsWith('INV-')) {
+    } else if (upperQuery.startsWith('INV')) {
       router.push(`/invoices?search=${encodeURIComponent(query)}`);
+    } else if (upperQuery.startsWith('ITEM') || upperQuery.startsWith('ITM')) {
+      router.push(`/items?search=${encodeURIComponent(query)}`);
     } else if (pathname.includes('/suppliers')) {
       router.push(`/suppliers?search=${encodeURIComponent(query)}`);
     } else if (pathname.includes('/items')) {
@@ -49,8 +51,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       router.push(`/purchase-orders?search=${encodeURIComponent(query)}`);
     } else if (pathname.includes('/invoices')) {
       router.push(`/invoices?search=${encodeURIComponent(query)}`);
-    } else {
+    } else if (pathname.includes('/purchase-requests')) {
       router.push(`/purchase-requests?search=${encodeURIComponent(query)}`);
+    } else {
+      // Default pencarian umum ke halaman Items jika tidak ada awalan spesifik
+      router.push(`/items?search=${encodeURIComponent(query)}`);
     }
   }
 
