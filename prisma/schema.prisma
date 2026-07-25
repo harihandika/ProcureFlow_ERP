@@ -90,6 +90,18 @@ enum AuditAction {
   RETRY_ERP_SYNC
 }
 
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  UNPAID
+  PAID
+  CANCELLED
+}
+
 enum AuditEntityType {
   USER
   ROLE
@@ -101,8 +113,10 @@ enum AuditEntityType {
   BUDGET
   BUDGET_TRANSACTION
   PURCHASE_REQUEST
+  APPROVAL
   PURCHASE_ORDER
   RECEIVING
+  INVOICE
   ERP_SYNC_LOG
   SYSTEM
 }
@@ -130,6 +144,7 @@ model User {
   purchaseRequests        PurchaseRequest[] @relation("PurchaseRequestRequester")
   createdOrders           PurchaseOrder[] @relation("PurchaseOrderCreatedBy")
   receivedGoods           Receiving[] @relation("ReceivingReceivedBy")
+  approvals               Approval[] @relation("ApprovalApprover")
   erpSyncLogs             ErpSyncLog[] @relation("ErpSyncTriggeredBy")
   auditTrails             AuditTrail[] @relation("AuditActor")
 
@@ -239,6 +254,7 @@ model Supplier {
 
   defaultItems Item[]
   purchaseOrders PurchaseOrder[]
+  invoices       Invoice[]
 
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @db.Timestamptz(6)
@@ -393,6 +409,7 @@ model PurchaseRequest {
 
   items              PurchaseRequestItem[]
   budgetTransactions BudgetTransaction[]
+  approvals          Approval[]
   purchaseOrders     PurchaseOrder[]
 
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
@@ -467,6 +484,7 @@ model PurchaseOrder {
 
   items      PurchaseOrderItem[]
   receivings Receiving[]
+  invoices   Invoice[]
   erpSyncLogs ErpSyncLog[]
 
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
@@ -635,4 +653,71 @@ model AuditTrail {
   @@index([entityType])
   @@index([entityType, entityId])
   @@index([createdAt])
+}
+
+model Approval {
+  id                String          @id @default(uuid()) @db.Uuid
+  decision          ApprovalDecision
+  reason            String?         @db.VarChar(500)
+  
+  purchaseRequestId String          @db.Uuid
+  purchaseRequest   PurchaseRequest @relation(fields: [purchaseRequestId], references: [id], onDelete: Cascade)
+  
+  approverId        String          @db.Uuid
+  approver          User            @relation("ApprovalApprover", fields: [approverId], references: [id], onDelete: Restrict)
+  
+  createdAt         DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime        @updatedAt @db.Timestamptz(6)
+
+  @@index([purchaseRequestId])
+  @@index([approverId])
+  @@index([decision])
+}
+
+model Invoice {
+  id              String        @id @default(uuid()) @db.Uuid
+  invoiceNumber   String        @unique @db.VarChar(80)
+  status          InvoiceStatus @default(DRAFT)
+  issueDate       DateTime?     @db.Date
+  dueDate         DateTime?     @db.Date
+  paidAt          DateTime?     @db.Timestamptz(6)
+  totalAmount     Decimal       @default(0) @db.Decimal(18, 2)
+  currency        String        @default("IDR") @db.Char(3)
+  taxAmount       Decimal       @default(0) @db.Decimal(18, 2)
+  notes           String?       @db.VarChar(1000)
+
+  purchaseOrderId String        @db.Uuid
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+
+  supplierId      String        @db.Uuid
+  supplier        Supplier      @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  items           InvoiceItem[]
+
+  createdAt       DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt       DateTime?     @db.Timestamptz(6)
+
+  @@index([purchaseOrderId])
+  @@index([supplierId])
+  @@index([status])
+  @@index([issueDate])
+  @@index([dueDate])
+}
+
+model InvoiceItem {
+  id          String  @id @default(uuid()) @db.Uuid
+  description String? @db.VarChar(500)
+
+  quantity    Decimal @db.Decimal(18, 4)
+  unitPrice   Decimal @db.Decimal(18, 2)
+  lineTotal   Decimal @db.Decimal(18, 2)
+
+  invoiceId   String  @db.Uuid
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([invoiceId])
 }

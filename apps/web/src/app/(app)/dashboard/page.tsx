@@ -1,3 +1,5 @@
+'use client';
+
 import {
   AlertCircle,
   ArrowUpRight,
@@ -8,6 +10,7 @@ import {
   Landmark,
   RefreshCw,
   Wallet,
+  Loader2,
 } from 'lucide-react';
 import { POStatusChart, PRStatusChart } from '@/components/dashboard/dashboard-charts';
 import { StatusBadge, type WorkflowStatus } from '@/components/status-badge';
@@ -15,83 +18,8 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatCurrency } from '@/lib/utils';
-
-const totalBudget = 850000000;
-const usedBudget = 184000000;
-const remainingBudget = totalBudget - usedBudget;
-
-const summaryCards = [
-  {
-    label: 'Total Budget',
-    value: formatCurrency(totalBudget),
-    caption: 'Active allocation for FY 2026',
-    icon: Landmark,
-    tone: 'blue',
-  },
-  {
-    label: 'Used Budget',
-    value: formatCurrency(usedBudget),
-    caption: 'Committed and consumed spend',
-    icon: Wallet,
-    tone: 'emerald',
-  },
-  {
-    label: 'Remaining Budget',
-    value: formatCurrency(remainingBudget),
-    caption: 'Available for new requests',
-    icon: Banknote,
-    tone: 'sky',
-  },
-  {
-    label: 'Pending Approvals',
-    value: '33',
-    caption: 'Manager and finance queue',
-    icon: Clock3,
-    tone: 'amber',
-  },
-];
-
-const recentPurchaseRequests: Array<{
-  prNo: string;
-  requester: string;
-  department: string;
-  requiredDate: string;
-  amount: number;
-  status: WorkflowStatus;
-}> = [
-  {
-    prNo: 'PR-2026-0014',
-    requester: 'Rina Requester',
-    department: 'Information Technology',
-    requiredDate: '2026-05-20',
-    amount: 37500000,
-    status: 'Submitted',
-  },
-  {
-    prNo: 'PR-2026-0013',
-    requester: 'Maya Manager',
-    department: 'Operations',
-    requiredDate: '2026-05-22',
-    amount: 18850000,
-    status: 'Approved',
-  },
-  {
-    prNo: 'PR-2026-0012',
-    requester: 'Faris Finance',
-    department: 'Finance',
-    requiredDate: '2026-05-25',
-    amount: 9200000,
-    status: 'Draft',
-  },
-  {
-    prNo: 'PR-2026-0011',
-    requester: 'Rina Requester',
-    department: 'Information Technology',
-    requiredDate: '2026-05-18',
-    amount: 2150000,
-    status: 'Rejected',
-  },
-];
+import { useQuery } from '@tanstack/react-query';
+import { getDashboardSummary } from '@/lib/dashboard-api';
 
 const recentErpLogs: Array<{
   id: string;
@@ -120,31 +48,65 @@ const recentErpLogs: Array<{
     status: 'Failed',
     message: 'Temporary ERP timeout',
   },
-  {
-    id: 'ERP-0092',
-    poNo: 'PO-2026-0014',
-    operation: 'CREATE_PO',
-    attempt: '1 of 3',
-    syncedAt: '2026-05-11 16:08',
-    status: 'Success',
-    message: 'Accepted by mock ERP',
-  },
-  {
-    id: 'ERP-0091',
-    poNo: 'PO-2026-0013',
-    operation: 'CREATE_PO',
-    attempt: '3 of 3',
-    syncedAt: '2026-05-11 14:35',
-    status: 'Failed',
-    message: 'Supplier code rejected',
-  },
 ];
 
 export default function DashboardPage() {
+  const { data: summary, isLoading, isError } = useQuery({
+    queryKey: ['dashboard-summary'],
+    queryFn: getDashboardSummary,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex h-[400px] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
+
+  if (isError || !summary) {
+    return (
+      <div className="flex h-[400px] items-center justify-center">
+        <p className="text-red-500">Failed to load dashboard data</p>
+      </div>
+    );
+  }
+
+  const summaryCards = [
+    {
+      label: 'Total Budget',
+      value: formatCurrency(summary.budget.total),
+      caption: 'Active allocation for current FY',
+      icon: Landmark,
+      tone: 'blue',
+    },
+    {
+      label: 'Used Budget',
+      value: formatCurrency(summary.budget.spent),
+      caption: 'Committed and consumed spend',
+      icon: Wallet,
+      tone: 'emerald',
+    },
+    {
+      label: 'Remaining Budget',
+      value: formatCurrency(summary.budget.remaining),
+      caption: 'Available for new requests',
+      icon: Banknote,
+      tone: 'sky',
+    },
+    {
+      label: 'Pending Approvals',
+      value: summary.totalPrPending.toString(),
+      caption: 'Manager and finance queue',
+      icon: Clock3,
+      tone: 'amber',
+    },
+  ];
+
   return (
     <div className="space-y-6">
-      <section className="overflow-hidden rounded-lg border bg-white shadow-sm">
-        <div className="grid gap-6 bg-slate-950 px-6 py-6 text-white lg:grid-cols-[1.3fr_0.7fr]">
+      <section className="overflow-hidden rounded-2xl border-0 bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 shadow-xl">
+        <div className="grid gap-6 px-6 py-8 text-white lg:grid-cols-[1.3fr_0.7fr]">
           <div>
             <div className="flex items-center gap-2 text-sm font-medium text-blue-200">
               <FileText className="h-4 w-4" />
@@ -154,13 +116,13 @@ export default function DashboardPage() {
               Budget control, request approvals, receiving, and ERP sync status.
             </h2>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
-              Portfolio-ready overview for finance, purchasing, warehouse, and department managers using dummy data.
+              Real-time portfolio overview for finance, purchasing, warehouse, and department managers.
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-            <HeroMetric label="Budget Utilization" value="21.6%" />
-            <HeroMetric label="Approval SLA" value="92%" />
-            <HeroMetric label="ERP Success" value="87%" />
+            <HeroMetric label="Budget Utilization" value={`${summary.budget.usagePercentage.toFixed(1)}%`} />
+            <HeroMetric label="Approved PRs" value={summary.totalPrApproved.toString()} />
+            <HeroMetric label="Received POs" value={summary.totalPoReceived.toString()} />
           </div>
         </div>
       </section>
@@ -168,9 +130,8 @@ export default function DashboardPage() {
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {summaryCards.map((card) => {
           const Icon = card.icon;
-
           return (
-            <Card key={card.label} className="overflow-hidden">
+            <Card key={card.label} className="overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-blue-900/5 group">
               <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
                 <div>
                   <CardDescription>{card.label}</CardDescription>
@@ -183,7 +144,7 @@ export default function DashboardPage() {
               <CardContent>
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs text-slate-500">{card.caption}</p>
-                  <ArrowUpRight className="h-4 w-4 text-slate-400" />
+                  <ArrowUpRight className="h-4 w-4 text-slate-400 group-hover:text-blue-500 transition-colors" />
                 </div>
               </CardContent>
             </Card>
@@ -198,7 +159,7 @@ export default function DashboardPage() {
               <CardTitle>PR Status Chart</CardTitle>
               <CardDescription>Current purchase request pipeline</CardDescription>
             </div>
-            <Badge variant="blue">87 PR</Badge>
+            <Badge variant="blue">{summary.totalPrPending + summary.totalPrApproved} PR Active</Badge>
           </CardHeader>
           <CardContent>
             <PRStatusChart />
@@ -211,7 +172,7 @@ export default function DashboardPage() {
               <CardTitle>PO Status Chart</CardTitle>
               <CardDescription>Purchase order lifecycle status</CardDescription>
             </div>
-            <Badge variant="green">97 PO</Badge>
+            <Badge variant="green">{summary.totalPoIssued + summary.totalPoReceived} PO Active</Badge>
           </CardHeader>
           <CardContent>
             <POStatusChart />
@@ -237,26 +198,31 @@ export default function DashboardPage() {
                   <TableRow>
                     <TableHead>PR No</TableHead>
                     <TableHead>Requester</TableHead>
-                    <TableHead>Department</TableHead>
+                    <TableHead>Date</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {recentPurchaseRequests.map((request) => (
-                    <TableRow key={request.prNo}>
+                  {summary.recentPurchaseRequests.map((request) => (
+                    <TableRow key={request.id} className="hover:bg-slate-50/50 transition-colors cursor-default">
                       <TableCell>
-                        <div className="font-medium text-slate-900">{request.prNo}</div>
-                        <div className="text-xs text-slate-500">Need by {request.requiredDate}</div>
+                        <div className="font-medium text-slate-900">{request.requestNumber}</div>
+                        <div className="text-xs text-slate-500">{request.title}</div>
                       </TableCell>
-                      <TableCell>{request.requester}</TableCell>
-                      <TableCell>{request.department}</TableCell>
+                      <TableCell>{request.requester.fullName}</TableCell>
+                      <TableCell>{new Date(request.createdAt).toLocaleDateString()}</TableCell>
                       <TableCell>
-                        <StatusBadge status={request.status} />
+                        <StatusBadge status={request.status as WorkflowStatus} />
                       </TableCell>
-                      <TableCell className="text-right font-medium">{formatCurrency(request.amount)}</TableCell>
+                      <TableCell className="text-right font-medium">{formatCurrency(Number(request.totalAmount))}</TableCell>
                     </TableRow>
                   ))}
+                  {summary.recentPurchaseRequests.length === 0 && (
+                     <TableRow>
+                       <TableCell colSpan={5} className="text-center py-4 text-slate-500">No requests found</TableCell>
+                     </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </div>
@@ -287,7 +253,7 @@ export default function DashboardPage() {
                 </TableHeader>
                 <TableBody>
                   {recentErpLogs.map((log) => (
-                    <TableRow key={log.id}>
+                    <TableRow key={log.id} className="hover:bg-slate-50/50 transition-colors cursor-default">
                       <TableCell>
                         <div className="font-medium text-slate-900">{log.id}</div>
                         <div className="text-xs text-slate-500">{log.syncedAt}</div>

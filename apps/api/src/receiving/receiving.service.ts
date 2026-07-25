@@ -148,16 +148,18 @@ export class ReceivingService {
         include: receivingInclude,
       });
 
-      for (const [purchaseOrderItemId, quantityReceived] of quantityByPurchaseOrderItemId.entries()) {
-        const purchaseOrderItem = purchaseOrder.items.find((item) => item.id === purchaseOrderItemId);
+      await Promise.all(
+        Array.from(quantityByPurchaseOrderItemId.entries()).map(([purchaseOrderItemId, quantityReceived]) => {
+          const purchaseOrderItem = purchaseOrder.items.find((item) => item.id === purchaseOrderItemId);
 
-        await tx.purchaseOrderItem.update({
-          where: { id: purchaseOrderItemId },
-          data: {
-            quantityReceived: purchaseOrderItem!.quantityReceived.plus(quantityReceived),
-          },
-        });
-      }
+          return tx.purchaseOrderItem.update({
+            where: { id: purchaseOrderItemId },
+            data: {
+              quantityReceived: purchaseOrderItem!.quantityReceived.plus(quantityReceived),
+            },
+          });
+        })
+      );
 
       await tx.purchaseOrder.update({
         where: { id: purchaseOrder.id },

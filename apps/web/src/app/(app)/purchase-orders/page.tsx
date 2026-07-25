@@ -14,12 +14,28 @@ import {
   getPurchaseOrderStatusLabel,
   type PurchaseOrder,
 } from '@/lib/purchase-order-api';
+import { generateInvoice } from '@/lib/invoice-api';
 import { formatCurrency } from '@/lib/utils';
+import { toast } from 'sonner';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 export default function PurchaseOrdersPage() {
+  const queryClient = useQueryClient();
+
   const purchaseOrdersQuery = useQuery({
     queryKey: ['purchase-orders', 'list', { page: 1, limit: 50 }],
     queryFn: () => fetchPurchaseOrders({ page: 1, limit: 50 }),
+  });
+
+  const generateInvoiceMutation = useMutation({
+    mutationFn: (id: string) => generateInvoice(id),
+    onSuccess: () => {
+      toast.success('Invoice generated successfully');
+      queryClient.invalidateQueries({ queryKey: ['purchase-orders'] });
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.message || 'Failed to generate invoice');
+    },
   });
 
   const purchaseOrders = purchaseOrdersQuery.data?.data ?? [];
@@ -70,7 +86,7 @@ export default function PurchaseOrdersPage() {
                   <TableHead>PO Status</TableHead>
                   <TableHead>ERP Sync</TableHead>
                   <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="w-[90px] text-right">Detail</TableHead>
+                  <TableHead className="w-[140px] text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -92,7 +108,14 @@ export default function PurchaseOrdersPage() {
                   </TableRow>
                 ) : null}
                 {!purchaseOrdersQuery.isLoading && !purchaseOrdersQuery.isError
-                  ? purchaseOrders.map((order) => <PurchaseOrderRow key={order.id} order={order} />)
+                  ? purchaseOrders.map((order) => (
+                      <PurchaseOrderRow 
+                        key={order.id} 
+                        order={order} 
+                        onGenerateInvoice={(id) => generateInvoiceMutation.mutate(id)}
+                        isGenerating={generateInvoiceMutation.isPending && generateInvoiceMutation.variables === order.id}
+                      />
+                    ))
                   : null}
                 {!purchaseOrdersQuery.isLoading && !purchaseOrdersQuery.isError && !purchaseOrders.length ? (
                   <TableRow>
@@ -110,7 +133,15 @@ export default function PurchaseOrdersPage() {
   );
 }
 
-function PurchaseOrderRow({ order }: { order: PurchaseOrder }) {
+function PurchaseOrderRow({ 
+  order, 
+  onGenerateInvoice, 
+  isGenerating 
+}: { 
+  order: PurchaseOrder;
+  onGenerateInvoice: (id: string) => void;
+  isGenerating: boolean;
+}) {
   return (
     <TableRow>
       <TableCell>
@@ -127,11 +158,25 @@ function PurchaseOrderRow({ order }: { order: PurchaseOrder }) {
       </TableCell>
       <TableCell className="text-right font-medium">{formatCurrency(order.totalAmount)}</TableCell>
       <TableCell className="text-right">
-        <Button asChild variant="ghost" size="icon" aria-label={`View ${order.poNumber}`}>
-          <Link href={`/purchase-orders/${order.id}`}>
-            <ArrowUpRight className="h-4 w-4" />
-          </Link>
-        </Button>
+        <div className="flex justify-end gap-2">
+          {(order.status === 'RECEIVED' || order.status === 'PARTIALLY_RECEIVED') && (
+            <Button 
+              size="sm" 
+              variant="outline" 
+              className="text-xs"
+              disabled={isGenerating}
+              onClick={() => onGenerateInvoice(order.id)}
+            >
+              {isGenerating ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+              Invoice
+            </Button>
+          )}
+          <Button asChild variant="ghost" size="icon" aria-label={`View ${order.poNumber}`}>
+            <Link href={`/purchase-orders/${order.id}`}>
+              <ArrowUpRight className="h-4 w-4" />
+            </Link>
+          </Button>
+        </div>
       </TableCell>
     </TableRow>
   );

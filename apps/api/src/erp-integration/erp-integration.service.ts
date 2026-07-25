@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { AuditAction, AuditEntityType, ErpSyncOperation, ErpSyncStatus, Prisma, PurchaseOrderStatus } from '@prisma/client';
 import { ErpSyncLogQueryDto } from './dto/erp-sync-log-query.dto';
 import { SyncPurchaseOrderDto } from './dto/sync-purchase-order.dto';
@@ -28,6 +28,8 @@ const erpSyncLogInclude = {
 
 @Injectable()
 export class ErpIntegrationService {
+  private readonly logger = new Logger(ErpIntegrationService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditTrailsService: AuditTrailsService,
@@ -39,6 +41,10 @@ export class ErpIntegrationService {
     const purchaseOrder = await this.findSyncablePurchaseOrder(purchaseOrderId);
     const attemptNo = await this.getNextAttemptNo(purchaseOrderId, ErpSyncOperation.CREATE_PO);
     const mockResponse = this.simulateErpResponse(purchaseOrder.poNumber, dto.simulateStatus);
+
+    if (mockResponse.status === ErpSyncStatus.FAILED) {
+      this.logger.warn(`ERP Sync failed for PO ${purchaseOrder.poNumber}: ${mockResponse.errorMessage}`);
+    }
 
     const syncLog = await this.prisma.$transaction(async (tx) => {
       const createdLog = await tx.erpSyncLog.create({
@@ -113,6 +119,10 @@ export class ErpIntegrationService {
     const purchaseOrder = await this.findSyncablePurchaseOrder(failedLog.purchaseOrderId);
     const retryAttemptNo = failedLog.attemptNo + 1;
     const mockResponse = this.simulateErpResponse(purchaseOrder.poNumber, dto.simulateStatus);
+
+    if (mockResponse.status === ErpSyncStatus.FAILED) {
+      this.logger.warn(`ERP Sync Retry failed for PO ${purchaseOrder.poNumber}: ${mockResponse.errorMessage}`);
+    }
 
     const retryLog = await this.prisma.$transaction(async (tx) => {
       await tx.erpSyncLog.update({

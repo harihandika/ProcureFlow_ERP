@@ -26,9 +26,11 @@ describe('PurchaseRequestsService', () => {
     },
     item: {
       findFirst: jest.fn(),
+      findMany: jest.fn(),
     },
     packagingUnit: {
       findFirst: jest.fn(),
+      findMany: jest.fn(),
     },
     purchaseRequest: {
       create: jest.fn(),
@@ -112,10 +114,11 @@ describe('PurchaseRequestsService', () => {
   it('creates a draft purchase request with multiple items and snapshots', async () => {
     prisma.department.findFirst.mockResolvedValue({ id: 'department-id' });
     prisma.budget.findFirst.mockResolvedValue(activeBudget);
-    prisma.item.findFirst
-      .mockResolvedValueOnce({ id: 'item-1', sku: 'LAPTOP-STD-001', name: 'Standard Business Laptop' })
-      .mockResolvedValueOnce({ id: 'item-2', sku: 'MOUSE-WL-001', name: 'Wireless Mouse' });
-    prisma.packagingUnit.findFirst.mockResolvedValue({ id: 'unit-id', code: 'PCS', name: 'Piece' });
+    prisma.item.findMany.mockResolvedValue([
+      { id: 'item-1', sku: 'LAPTOP-STD-001', name: 'Standard Business Laptop' },
+      { id: 'item-2', sku: 'MOUSE-WL-001', name: 'Wireless Mouse' }
+    ]);
+    prisma.packagingUnit.findMany.mockResolvedValue([{ id: 'unit-id', code: 'PCS', name: 'Piece' }]);
     prisma.purchaseRequest.create.mockResolvedValue(draftPurchaseRequest);
 
     const service = new PurchaseRequestsService(prisma as never, auditTrailsService as never);

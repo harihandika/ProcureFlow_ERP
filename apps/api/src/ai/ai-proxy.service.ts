@@ -1,5 +1,5 @@
 import { HttpService } from '@nestjs/axios';
-import { Injectable, InternalServerErrorException, NotFoundException, ServiceUnavailableException, HttpException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException, ServiceUnavailableException, HttpException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuditPrResponseDto } from './dto/audit-pr.dto';
 import { catchError, lastValueFrom } from 'rxjs';
@@ -7,6 +7,7 @@ import { AxiosError } from 'axios';
 
 @Injectable()
 export class AiProxyService {
+  private readonly logger = new Logger(AiProxyService.name);
   private readonly pythonAiUrl: string;
 
   constructor(
@@ -27,6 +28,8 @@ export class AiProxyService {
           { timeout: 35000 }
         ).pipe(
           catchError((error: AxiosError) => {
+            this.logger.error(`AI Service Request Failed: ${error.message}`, error.stack);
+            
             if (error.code === 'ECONNREFUSED') {
               throw new ServiceUnavailableException('Layanan AI sedang tidak tersedia');
             }

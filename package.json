@@ -15,7 +15,7 @@
     "ai:dev": "cd apps/ai && venv\\Scripts\\python main.py",
     "ai:install": "cd apps/ai && venv\\Scripts\\pip install -r requirements.txt",
     "test:e2e": "playwright test",
-    "web:dev": "npm run dev -w @procureflow/web",
+    "web:dev": "npm run dev -w @procureflow/web -- --turbo",
     "web:start": "npm run start -w @procureflow/web",
     "web:build": "npm run build -w @procureflow/web",
     "web:lint": "npm run lint -w @procureflow/web",

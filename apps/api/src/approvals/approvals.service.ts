@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditAction, AuditEntityType, Prisma, PurchaseRequestStatus } from '@prisma/client';
+import { ApprovalDecision, AuditAction, AuditEntityType, Prisma, PurchaseRequestStatus } from '@prisma/client';
 import { RejectApprovalDto } from './dto/reject-approval.dto';
 import { AuditTrailsService } from '../audit-trails/audit-trails.service';
 import { AppRole } from '../common/constants/roles';
@@ -66,9 +66,14 @@ const auditTrailInclude = {
 } satisfies Prisma.AuditTrailInclude;
 
 type ApprovalPurchaseRequest = Prisma.PurchaseRequestGetPayload<{ include: typeof approvalPurchaseRequestInclude }>;
-type ApprovalAuditTrail = Prisma.AuditTrailGetPayload<{ include: typeof auditTrailInclude }>;
-type ApprovalDecision = 'APPROVED' | 'REJECTED';
 const emptyUuid = '00000000-0000-0000-0000-000000000000';
+type ApprovalRecord = Prisma.ApprovalGetPayload<{
+  include: {
+    approver: {
+      select: { id: true; email: true; fullName: true };
+    };
+  };
+}>;
 
 @Injectable()
 export class ApprovalsService {
@@ -92,10 +97,10 @@ export class ApprovalsService {
       orderBy: [{ submittedAt: 'desc' }, { updatedAt: 'desc' }],
     });
 
-    const auditTrails = await this.findApprovalAuditTrails(purchaseRequests.map((request) => request.id));
+    const approvals = await this.findApprovals(purchaseRequests.map((request) => request.id));
 
     return purchaseRequests.map((purchaseRequest) =>
-      this.toApprovalQueueItem(purchaseRequest, this.getAuditsForEntity(auditTrails, purchaseRequest.id), user),
+      this.toApprovalQueueItem(purchaseRequest, this.getApprovalsForEntity(approvals, purchaseRequest.id), user),
     );
   }
 
@@ -111,8 +116,8 @@ export class ApprovalsService {
 
     await this.recordDecision(updatedPurchaseRequest, user, 'APPROVED');
 
-    const auditTrails = await this.findApprovalAuditTrails([updatedPurchaseRequest.id]);
-    return this.toApprovalQueueItem(updatedPurchaseRequest, auditTrails, user);
+    const approvals = await this.findApprovals([updatedPurchaseRequest.id]);
+    return this.toApprovalQueueItem(updatedPurchaseRequest, approvals, user);
   }
 
   async reject(id: string, dto: RejectApprovalDto, user: AuthenticatedUser) {
@@ -127,8 +132,8 @@ export class ApprovalsService {
 
     await this.recordDecision(updatedPurchaseRequest, user, 'REJECTED', dto.reason.trim());
 
-    const auditTrails = await this.findApprovalAuditTrails([updatedPurchaseRequest.id]);
-    return this.toApprovalQueueItem(updatedPurchaseRequest, auditTrails, user);
+    const approvals = await this.findApprovals([updatedPurchaseRequest.id]);
+    return this.toApprovalQueueItem(updatedPurchaseRequest, approvals, user);
   }
 
   private async findSubmittedPurchaseRequest(id: string) {
@@ -181,6 +186,15 @@ export class ApprovalsService {
     decision: ApprovalDecision,
     reason?: string,
   ) {
+    await this.prisma.approval.create({
+      data: {
+        purchaseRequestId: purchaseRequest.id,
+        approverId: user.id,
+        decision,
+        reason: reason || null,
+      },
+    });
+
     await this.auditTrailsService.record({
       action: AuditAction.UPDATE,
       entityType: AuditEntityType.PURCHASE_REQUEST,
@@ -196,47 +210,46 @@ export class ApprovalsService {
     });
   }
 
-  private async findApprovalAuditTrails(entityIds: string[]) {
+  private async findApprovals(entityIds: string[]) {
     if (!entityIds.length) {
       return [];
     }
 
-    const auditTrails = await this.prisma.auditTrail.findMany({
+    return this.prisma.approval.findMany({
       where: {
-        action: AuditAction.UPDATE,
-        entityType: AuditEntityType.PURCHASE_REQUEST,
-        entityId: { in: entityIds },
+        purchaseRequestId: { in: entityIds },
       },
-      include: auditTrailInclude,
+      include: {
+        approver: {
+          select: { id: true, email: true, fullName: true },
+        },
+      },
       orderBy: { createdAt: 'asc' },
     });
-
-    return auditTrails.filter((auditTrail) => Boolean(this.getApprovalDecision(auditTrail)));
   }
 
-  private getAuditsForEntity(auditTrails: ApprovalAuditTrail[], entityId: string) {
-    return auditTrails.filter((auditTrail) => auditTrail.entityId === entityId);
+  private getApprovalsForEntity(approvals: ApprovalRecord[], entityId: string) {
+    return approvals.filter((approval) => approval.purchaseRequestId === entityId);
   }
 
   private toApprovalQueueItem(
     purchaseRequest: ApprovalPurchaseRequest,
-    auditTrails: ApprovalAuditTrail[],
+    approvals: ApprovalRecord[],
     user: AuthenticatedUser,
   ) {
-    const latestDecision = auditTrails.at(-1);
-    const latestMetadata = this.getMetadata(latestDecision);
+    const latestDecision = approvals.at(-1);
 
     return {
       id: purchaseRequest.id,
       status: purchaseRequest.status,
       canAct: purchaseRequest.status === PurchaseRequestStatus.SUBMITTED && this.canActOnPurchaseRequest(purchaseRequest, user),
-      rejectReason: latestMetadata.reason ?? null,
+      rejectReason: latestDecision?.reason ?? null,
       purchaseRequest,
-      timeline: this.buildTimeline(purchaseRequest, auditTrails),
+      timeline: this.buildTimeline(purchaseRequest, approvals),
     };
   }
 
-  private buildTimeline(purchaseRequest: ApprovalPurchaseRequest, auditTrails: ApprovalAuditTrail[]) {
+  private buildTimeline(purchaseRequest: ApprovalPurchaseRequest, approvals: ApprovalRecord[]) {
     const timeline = [
       {
         label: 'Submitted',
@@ -247,16 +260,15 @@ export class ApprovalsService {
       },
     ];
 
-    const decisionSteps = auditTrails.map((auditTrail) => {
-      const metadata = this.getMetadata(auditTrail);
-      const decision = this.getApprovalDecision(auditTrail);
+    const decisionSteps = approvals.map((approval) => {
+      const decision = approval.decision;
 
       return {
         label: decision === 'REJECTED' ? 'Rejected' : 'Approved',
-        actor: auditTrail.actor?.fullName ?? 'Approver',
+        actor: approval.approver?.fullName ?? 'Approver',
         status: decision === 'REJECTED' ? 'REJECTED' : 'COMPLETED',
-        date: auditTrail.createdAt.toISOString(),
-        note: metadata.reason ?? null,
+        date: approval.createdAt.toISOString(),
+        note: approval.reason ?? null,
       };
     });
 
@@ -283,21 +295,5 @@ export class ApprovalsService {
 
     const departmentScope = this.getDepartmentScope(user);
     return !departmentScope.departmentId || departmentScope.departmentId === purchaseRequest.departmentId;
-  }
-
-  private getApprovalDecision(auditTrail?: ApprovalAuditTrail | null): ApprovalDecision | null {
-    const decision = this.getMetadata(auditTrail).approvalDecision;
-
-    return decision === 'APPROVED' || decision === 'REJECTED' ? decision : null;
-  }
-
-  private getMetadata(auditTrail?: ApprovalAuditTrail | null) {
-    const metadata = auditTrail?.metadata;
-
-    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
-      return {};
-    }
-
-    return metadata as { approvalDecision?: unknown; reason?: string };
   }
 }

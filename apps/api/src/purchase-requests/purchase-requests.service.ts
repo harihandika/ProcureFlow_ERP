@@ -237,7 +237,15 @@ export class PurchaseRequestsService {
       throw new BadRequestException('Budget is required before submitting a purchase request.');
     }
 
-    const budget = await this.validateBudget(budgetId, purchaseRequest.departmentId);
+    const isSameBudget = purchaseRequest.budget && purchaseRequest.budget.id === budgetId;
+    const budget = isSameBudget 
+      ? purchaseRequest.budget! 
+      : await this.validateBudget(budgetId, purchaseRequest.departmentId);
+
+    if (isSameBudget && budget.status !== BudgetStatus.ACTIVE) {
+      throw new BadRequestException('Budget does not exist or is not active.');
+    }
+
     const availableAmount = this.getAvailableBudgetAmount(budget);
 
     if (purchaseRequest.totalAmount.gt(availableAmount)) {
@@ -351,55 +359,56 @@ export class PurchaseRequestsService {
   }
 
   private async prepareItems(items: PurchaseRequestItemInputDto[]) {
-    return Promise.all(
-      items.map(async (input) => {
-        const [item, packagingUnit] = await Promise.all([
-          this.prisma.item.findFirst({
-            where: {
-              id: input.itemId,
-              deletedAt: null,
-              isActive: true,
-            },
-          }),
-          this.prisma.packagingUnit.findFirst({
-            where: {
-              id: input.packagingUnitId,
-              deletedAt: null,
-              isActive: true,
-            },
-          }),
-        ]);
+    if (!items.length) return [];
 
-        if (!item) {
-          throw new BadRequestException('One or more items do not exist or are inactive.');
-        }
+    const itemIds = [...new Set(items.map((i) => i.itemId))];
+    const unitIds = [...new Set(items.map((i) => i.packagingUnitId))];
 
-        if (!packagingUnit) {
-          throw new BadRequestException('One or more packaging units do not exist or are inactive.');
-        }
-
-        const quantity = new Prisma.Decimal(input.quantity);
-        const estimatedUnitPrice = new Prisma.Decimal(input.estimatedUnitPrice);
-        const lineTotal = quantity.mul(estimatedUnitPrice);
-
-        return {
-          lineTotal,
-          data: {
-            itemId: item.id,
-            packagingUnitId: packagingUnit.id,
-            description: input.description,
-            notes: input.notes,
-            quantity,
-            estimatedUnitPrice,
-            lineTotal,
-            itemSkuSnapshot: item.sku,
-            itemNameSnapshot: item.name,
-            unitCodeSnapshot: packagingUnit.code,
-            unitNameSnapshot: packagingUnit.name,
-          },
-        };
+    const [dbItems, dbUnits] = await Promise.all([
+      this.prisma.item.findMany({
+        where: { id: { in: itemIds }, deletedAt: null, isActive: true },
       }),
-    );
+      this.prisma.packagingUnit.findMany({
+        where: { id: { in: unitIds }, deletedAt: null, isActive: true },
+      }),
+    ]);
+
+    const itemMap = new Map(dbItems.map((i) => [i.id, i]));
+    const unitMap = new Map(dbUnits.map((u) => [u.id, u]));
+
+    return items.map((input) => {
+      const item = itemMap.get(input.itemId);
+      const packagingUnit = unitMap.get(input.packagingUnitId);
+
+      if (!item) {
+        throw new BadRequestException(`Item with ID ${input.itemId} does not exist or is inactive.`);
+      }
+
+      if (!packagingUnit) {
+        throw new BadRequestException(`Packaging unit with ID ${input.packagingUnitId} does not exist or is inactive.`);
+      }
+
+      const quantity = new Prisma.Decimal(input.quantity);
+      const estimatedUnitPrice = new Prisma.Decimal(input.estimatedUnitPrice);
+      const lineTotal = quantity.mul(estimatedUnitPrice);
+
+      return {
+        lineTotal,
+        data: {
+          itemId: item.id,
+          packagingUnitId: packagingUnit.id,
+          description: input.description,
+          notes: input.notes,
+          quantity,
+          estimatedUnitPrice,
+          lineTotal,
+          itemSkuSnapshot: item.sku,
+          itemNameSnapshot: item.name,
+          unitCodeSnapshot: packagingUnit.code,
+          unitNameSnapshot: packagingUnit.name,
+        },
+      };
+    });
   }
 
   private sumLineTotals(items: Array<{ lineTotal: Prisma.Decimal }>) {

@@ -1,5 +1,8 @@
 import psycopg2.extras
 from decimal import Decimal
+import logging
+
+logger = logging.getLogger(__name__)
 
 def _decimal_to_float(data):
     if isinstance(data, dict):
@@ -42,8 +45,8 @@ def get_pr_with_items(conn, pr_id: str) -> dict | None:
             pr_data["items"] = [dict(row) for row in items_rows]
             return _decimal_to_float(pr_data)
     except Exception as e:
-        print(f"Error executing get_pr_with_items: {e}")
-        return None
+        logger.exception(f"Error executing get_pr_with_items: {e}")
+        raise
 
 def get_budget_data(conn, budget_id: str) -> dict | None:
     try:
@@ -70,5 +73,5 @@ def get_budget_data(conn, budget_id: str) -> dict | None:
             budget_data["remainingAmount"] = allocated - reserved - committed - consumed
             return _decimal_to_float(budget_data)
     except Exception as e:
-        print(f"Error executing get_budget_data: {e}")
-        return None
+        logger.exception(f"Error executing get_budget_data: {e}")
+        raise

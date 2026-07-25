@@ -12,6 +12,8 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { DepartmentsModule } from './departments/departments.module';
 import { ErpIntegrationModule } from './erp-integration/erp-integration.module';
 import { AiModule } from './ai/ai.module';
+import { InvoicesModule } from './invoices/invoices.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { ItemsModule } from './items/items.module';
 import { PackagingUnitsModule } from './packaging-units/packaging-units.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -44,6 +46,8 @@ import { WarehousesModule } from './warehouses/warehouses.module';
     ReceivingModule,
     ErpIntegrationModule,
     AiModule,
+    InvoicesModule,
+    DashboardModule,
   ],
   providers: [
     {

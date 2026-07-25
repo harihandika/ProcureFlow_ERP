@@ -4,8 +4,12 @@ from services.audit_pr_service import audit_pr
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
-@router.post("/audit-pr", response_model=AuditPrResponse)
+@router.post(
+    "/audit-pr", 
+    response_model=AuditPrResponse,
+    summary="Audit Purchase Request",
+    description="Menganalisis risiko dari sebuah Purchase Request menggunakan AI (Google Gemini) berdasarkan data PR dan Budget."
+)
 def audit_purchase_request(request: AuditPrRequest):
-    """Analisis risiko Purchase Request menggunakan AI (Gemini)."""
     result = audit_pr(request.prId)
     return result

@@ -49,6 +49,26 @@ const suppliers = [
     country: 'Indonesia',
     paymentTerms: 'NET 14',
   },
+  {
+    code: 'SUP-003',
+    name: 'PT Mitra Lintas Logistik',
+    contactName: 'Andi Logistics',
+    email: 'andi@mitralintas.test',
+    phone: '+62215000003',
+    city: 'Surabaya',
+    country: 'Indonesia',
+    paymentTerms: 'NET 45',
+  },
+  {
+    code: 'SUP-004',
+    name: 'CV Makmur Sejahtera',
+    contactName: 'Citra Vendor',
+    email: 'citra@makmur.test',
+    phone: '+62215000004',
+    city: 'Semarang',
+    country: 'Indonesia',
+    paymentTerms: 'CASH',
+  },
 ];
 
 const warehouses = [
@@ -97,6 +117,56 @@ const items = [
     unitCode: 'BOX',
     supplierCode: 'SUP-001',
   },
+  {
+    sku: 'MONITOR-27-4K',
+    name: '27-inch 4K Monitor',
+    description: 'High resolution monitor for design and finance.',
+    category: 'IT Equipment',
+    brand: 'Dell',
+    estimatedUnitPrice: 6500000,
+    unitCode: 'PCS',
+    supplierCode: 'SUP-002',
+  },
+  {
+    sku: 'KEYBOARD-MECH-01',
+    name: 'Mechanical Keyboard',
+    description: 'Ergonomic mechanical keyboard.',
+    category: 'IT Accessories',
+    brand: 'Keychron',
+    estimatedUnitPrice: 1500000,
+    unitCode: 'PCS',
+    supplierCode: 'SUP-002',
+  },
+  {
+    sku: 'INK-HP-680-BLK',
+    name: 'HP 680 Black Ink Cartridge',
+    description: 'Black ink cartridge for standard printers.',
+    category: 'Office Supplies',
+    brand: 'HP',
+    estimatedUnitPrice: 145000,
+    unitCode: 'PCS',
+    supplierCode: 'SUP-001',
+  },
+  {
+    sku: 'PACK-TAPE-01',
+    name: 'Clear Packaging Tape',
+    description: 'Heavy duty clear tape for warehouse packing.',
+    category: 'Warehouse Supplies',
+    brand: '3M',
+    estimatedUnitPrice: 25000,
+    unitCode: 'PCS',
+    supplierCode: 'SUP-003',
+  },
+  {
+    sku: 'FORKLIFT-ELEC-01',
+    name: 'Electric Pallet Jack',
+    description: 'Electric pallet jack for warehouse moving.',
+    category: 'Warehouse Equipment',
+    brand: 'Toyota',
+    estimatedUnitPrice: 45000000,
+    unitCode: 'PCS',
+    supplierCode: 'SUP-003',
+  },
 ];
 
 const users = [
@@ -141,6 +211,20 @@ const users = [
     jobTitle: 'Warehouse Officer',
     departmentCode: 'WH',
     roleNames: ['WAREHOUSE'],
+  },
+  {
+    email: 'ops_requester@procureflow.test',
+    fullName: 'Joko Operations',
+    jobTitle: 'Operations Staff',
+    departmentCode: 'OPS',
+    roleNames: ['REQUESTER'],
+  },
+  {
+    email: 'ops_manager@procureflow.test',
+    fullName: 'Lestari Ops Manager',
+    jobTitle: 'Operations Manager',
+    departmentCode: 'OPS',
+    roleNames: ['MANAGER'],
   },
 ];
 
@@ -300,11 +384,13 @@ async function main() {
   const finance = await prisma.user.findUnique({ where: { email: 'finance@procureflow.test' } });
   const purchasing = await prisma.user.findUnique({ where: { email: 'purchasing@procureflow.test' } });
   const warehouse = await prisma.user.findUnique({ where: { email: 'warehouse@procureflow.test' } });
+  const opsManager = await prisma.user.findUnique({ where: { email: 'ops_manager@procureflow.test' } });
 
   await prisma.department.update({ where: { code: 'IT' }, data: { managerId: manager?.id } });
   await prisma.department.update({ where: { code: 'FIN' }, data: { managerId: finance?.id } });
   await prisma.department.update({ where: { code: 'PUR' }, data: { managerId: purchasing?.id } });
   await prisma.department.update({ where: { code: 'WH' }, data: { managerId: warehouse?.id } });
+  await prisma.department.update({ where: { code: 'OPS' }, data: { managerId: opsManager?.id } });
 
   const seededBudgets = [
     {
@@ -322,6 +408,22 @@ async function main() {
       period: 'FY',
       allocatedAmount: 350000000,
       departmentCode: 'OPS',
+    },
+    {
+      code: 'BGT-WH-2026',
+      name: 'Warehouse Department Budget 2026',
+      fiscalYear: 2026,
+      period: 'FY',
+      allocatedAmount: 250000000,
+      departmentCode: 'WH',
+    },
+    {
+      code: 'BGT-FIN-2026',
+      name: 'Finance Department Budget 2026',
+      fiscalYear: 2026,
+      period: 'FY',
+      allocatedAmount: 150000000,
+      departmentCode: 'FIN',
     },
   ];
 

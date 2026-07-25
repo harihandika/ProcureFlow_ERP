@@ -32,13 +32,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      <div className="hidden lg:fixed lg:inset-y-0 lg:z-40 lg:flex lg:w-72 lg:flex-col lg:border-r lg:bg-slate-950">
+    <div className="min-h-screen bg-slate-50/50">
+      <div className="hidden lg:fixed lg:inset-y-0 lg:z-40 lg:flex lg:w-72 lg:flex-col lg:border-r lg:border-slate-800 lg:bg-slate-900 shadow-enterprise">
         {sidebar}
       </div>
 
       <div className="lg:pl-72">
-        <header className="sticky top-0 z-30 border-b bg-white/95 backdrop-blur">
+        <header className="sticky top-0 z-30 border-b border-slate-200/50 bg-white/70 backdrop-blur-md shadow-sm">
           <div className="flex min-h-16 items-center gap-3 px-4 py-3 md:px-6">
             <Sheet>
               <SheetTrigger asChild>
@@ -72,8 +72,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Button variant="ghost" size="icon" aria-label="Notifications">
                 <Bell className="h-5 w-5" />
               </Button>
-              <div className="flex items-center gap-3 rounded-md border px-2 py-1.5 sm:px-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-900 text-xs font-semibold text-white">
+              <div className="flex items-center gap-3 rounded-full border border-slate-200/60 bg-white/50 px-2 py-1.5 sm:px-3 shadow-sm transition-all hover:shadow-md">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 shadow-sm text-xs font-semibold text-white ring-2 ring-white">
                   {getInitials(user?.fullName ?? 'User')}
                 </div>
                 <div className="hidden leading-tight md:block">
@@ -88,7 +88,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="min-h-[calc(100vh-4rem)] bg-slate-50/70">
+        <main className="min-h-[calc(100vh-4rem)] bg-transparent animate-fade-in">
           <div className="mx-auto w-full max-w-[1500px] px-4 py-6 md:px-6 lg:px-8">{children}</div>
         </main>
       </div>
@@ -131,8 +131,8 @@ function normalizeUserRoles(roles: unknown): UserRole[] {
 function SidebarContent({ pathname, items }: { pathname: string; items: NavigationItem[] }) {
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-16 items-center gap-3 border-b border-slate-800 px-5">
-        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-blue-500 text-white">
+      <div className="flex h-16 items-center gap-3 border-b border-slate-800/50 bg-slate-950/30 px-5">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg text-white">
           <ShieldCheck className="h-5 w-5" />
         </div>
         <div>
@@ -152,8 +152,8 @@ function SidebarContent({ pathname, items }: { pathname: string; items: Navigati
               href={item.href}
               data-testid={`nav-${item.href.replace(/^\//, '').replace(/\//g, '-') || 'dashboard'}`}
               className={cn(
-                'flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-900 hover:text-white',
-                active && 'bg-blue-600 text-white hover:bg-blue-600',
+                'flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium text-slate-400 transition-all duration-200 hover:translate-x-1 hover:bg-slate-800/50 hover:text-white',
+                active && 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-500 hover:to-indigo-500 shadow-md hover:translate-x-0',
               )}
             >
               <Icon className="h-4 w-4" />
@@ -164,7 +164,7 @@ function SidebarContent({ pathname, items }: { pathname: string; items: Navigati
       </nav>
 
       <div className="border-t border-slate-800 p-4">
-        <div className="rounded-md border border-slate-800 bg-slate-900 p-3">
+        <div className="rounded-xl border border-slate-700/50 bg-slate-800/30 p-4 backdrop-blur-sm">
           <div className="text-xs font-medium uppercase text-slate-400">Environment</div>
           <div className="mt-1 text-sm font-semibold text-white">Portfolio Demo</div>
           <div className="mt-1 text-xs text-slate-400">Next.js UI + NestJS API</div>

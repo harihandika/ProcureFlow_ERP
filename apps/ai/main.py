@@ -1,9 +1,23 @@
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from config import PORT
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="ProcureFlow AI Engine")
+from config import PORT
+from db.connection import close_pool
+from routers import audit_pr
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    close_pool()
+
+app = FastAPI(
+    title="ProcureFlow AI Engine", 
+    version="1.0.0", 
+    description="AI microservice for ProcureFlow ERP", 
+    lifespan=lifespan
+)
 
 # CORS Configuration
 app.add_middleware(
@@ -14,11 +28,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/health")
+@app.get("/health", tags=["Health"])
 def health_check():
     return {"status": "ok", "service": "procureflow-ai"}
 
-from routers import audit_pr
 app.include_router(audit_pr.router)
 
 if __name__ == "__main__":

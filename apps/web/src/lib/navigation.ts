@@ -9,6 +9,7 @@ import {
   Handshake,
   Landmark,
   PackageCheck,
+  Receipt,
   RefreshCw,
   ShoppingCart,
   Warehouse,
@@ -101,6 +102,12 @@ export const navigationItems: NavigationItem[] = [
     href: '/receiving',
     icon: PackageCheck,
     roles: ['ADMIN', 'WAREHOUSE', 'PURCHASING'] satisfies UserRole[],
+  },
+  {
+    title: 'Invoices',
+    href: '/invoices',
+    icon: Receipt,
+    roles: ['ADMIN', 'FINANCE', 'PURCHASING'] satisfies UserRole[],
   },
   {
     title: 'ERP Sync Logs',
