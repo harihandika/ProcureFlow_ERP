@@ -110,7 +110,7 @@ describe('ErpIntegrationService', () => {
     );
     expect(tx.purchaseOrder.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'po-id' },
+        where: { id: 'po-id', deletedAt: null, status: { in: [PurchaseOrderStatus.DRAFT, PurchaseOrderStatus.ISSUED] } },
         data: expect.objectContaining({ status: PurchaseOrderStatus.ISSUED }),
       }),
     );
@@ -135,6 +135,14 @@ describe('ErpIntegrationService', () => {
     const result = await service.syncPurchaseOrder('po-id', { simulateStatus: ErpSyncStatus.FAILED }, user);
 
     expect(result.status).toBe(ErpSyncStatus.FAILED);
+    expect(tx.purchaseOrder.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects ERP sync after receiving has started', async () => {
+    prisma.purchaseOrder.findFirst.mockResolvedValue({ ...purchaseOrder, status: PurchaseOrderStatus.PARTIALLY_RECEIVED });
+    const service = new ErpIntegrationService(prisma as never, auditTrailsService as never);
+    await expect(service.syncPurchaseOrder('po-id', { simulateStatus: ErpSyncStatus.SUCCESS }, user)).rejects.toThrow('Only draft or issued purchase orders');
+    expect(tx.erpSyncLog.create).not.toHaveBeenCalled();
     expect(tx.purchaseOrder.update).not.toHaveBeenCalled();
   });
 

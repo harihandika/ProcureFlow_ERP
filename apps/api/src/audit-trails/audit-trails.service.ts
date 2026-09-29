@@ -33,9 +33,9 @@ export class AuditTrailsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async record(input: RecordAuditInput) {
+  async record(input: RecordAuditInput, tx?: Prisma.TransactionClient) {
     try {
-      return await this.prisma.auditTrail.create({
+      return await (tx ?? this.prisma).auditTrail.create({
         data: {
           action: input.action,
           entityType: input.entityType,
@@ -50,6 +50,8 @@ export class AuditTrailsService {
         },
       });
     } catch (error) {
+      // Transactional callers require the audit to commit with the business record.
+      if (tx) throw error;
       this.logger.warn(`Audit write failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       return null;
     }

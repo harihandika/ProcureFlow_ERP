@@ -159,7 +159,7 @@ function PurchaseOrderRow({
       <TableCell className="text-right font-medium">{formatCurrency(order.totalAmount)}</TableCell>
       <TableCell className="text-right">
         <div className="flex justify-end gap-2">
-          {(order.status === 'RECEIVED' || order.status === 'PARTIALLY_RECEIVED') && (
+          {order.status === 'RECEIVED' && (
             <Button 
               size="sm" 
               variant="outline" 

@@ -27,14 +27,14 @@ export class PurchaseRequestsController {
 
   @Get()
   @ApiOperation({ summary: 'List purchase requests with pagination, search, and filters.' })
-  findAll(@Query() query: PurchaseRequestQueryDto) {
-    return this.purchaseRequestsService.findAll(query);
+  findAll(@Query() query: PurchaseRequestQueryDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.purchaseRequestsService.findAll(query, user);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get purchase request detail.' })
-  findOne(@Param('id') id: string) {
-    return this.purchaseRequestsService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.purchaseRequestsService.findOne(id, user);
   }
 
   @Patch(':id')

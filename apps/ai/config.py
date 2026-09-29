@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+AI_SERVICE_API_KEY = os.getenv("AI_SERVICE_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL")
 PORT = int(os.getenv("PORT", 8000))
 

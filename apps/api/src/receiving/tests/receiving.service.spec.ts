@@ -10,6 +10,7 @@ describe('ReceivingService', () => {
       update: jest.fn(),
     },
     purchaseOrder: {
+      findFirst: jest.fn(),
       update: jest.fn(),
     },
   };
@@ -80,6 +81,7 @@ describe('ReceivingService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    tx.purchaseOrder.findFirst.mockImplementation((args: unknown) => prisma.purchaseOrder.findFirst(args));
     prisma.$transaction.mockImplementation((callback: (txClient: typeof tx) => unknown) => callback(tx));
     tx.receiving.create.mockResolvedValue({
       id: 'receiving-id',
@@ -137,6 +139,7 @@ describe('ReceivingService', () => {
         entityLabel: 'GRN-202605110001',
         actorId: 'warehouse-user-id',
       }),
+      tx,
     );
     expect(result).toEqual({
       id: 'receiving-id',
@@ -205,5 +208,24 @@ describe('ReceivingService', () => {
         warehouseUser,
       ),
     ).rejects.toThrow('Scanned item code was not found on this purchase order.');
+  });
+
+  it('rejects receiving a draft purchase order', async () => {
+    prisma.purchaseOrder.findFirst.mockResolvedValue({ ...purchaseOrder, status: PurchaseOrderStatus.DRAFT });
+    const service = new ReceivingService(prisma as never, auditTrailsService as never);
+    await expect(service.receive({ purchaseOrderId: 'po-id', items: [
+      { purchaseOrderItemId: 'po-item-1', quantityReceived: 1 },
+    ] }, warehouseUser)).rejects.toThrow('Only issued or partially received purchase orders can be received.');
+    expect(tx.receiving.create).not.toHaveBeenCalled();
+  });
+
+  it('aggregates duplicate lines before checking ordered quantity', async () => {
+    prisma.purchaseOrder.findFirst.mockResolvedValue(purchaseOrder);
+    const service = new ReceivingService(prisma as never, auditTrailsService as never);
+    await expect(service.receive({ purchaseOrderId: 'po-id', items: [
+      { purchaseOrderItemId: 'po-item-1', quantityReceived: 3 },
+      { purchaseOrderItemId: 'po-item-1', quantityReceived: 2 },
+    ] }, warehouseUser)).rejects.toThrow('Receiving quantity cannot exceed ordered quantity.');
+    expect(tx.receiving.create).not.toHaveBeenCalled();
   });
 });

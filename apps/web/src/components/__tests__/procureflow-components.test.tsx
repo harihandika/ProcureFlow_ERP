@@ -12,6 +12,9 @@ import { StatusBadge } from '@/components/status-badge';
 import { PurchaseRequestForm } from '@/components/purchase-requests/purchase-request-form';
 import { ApprovalQueue } from '@/components/approvals/approval-queue';
 import type { MasterDataRecord } from '@/lib/master-data';
+import { getDashboardSummary } from '@/lib/dashboard-api';
+
+vi.mock('@/lib/dashboard-api', () => ({ getDashboardSummary: vi.fn() }));
 
 const { mockAuthValue, mockNavigation, mockFetchMasterData, mockFetchBudgets, mockFetchMyApprovalQueue } = vi.hoisted(() => ({
   mockAuthValue: {
@@ -224,13 +227,20 @@ describe('ProcureFlow component tests', () => {
     expect(screen.queryByText('Audit Trails')).not.toBeInTheDocument();
   });
 
-  it('renders dashboard summary cards', () => {
-    render(<DashboardPage />);
+  it('renders dashboard summary cards', async () => {
+    vi.mocked(getDashboardSummary).mockResolvedValue({
+      totalPrPending: 3, totalPrApproved: 2, totalPoIssued: 1, totalPoReceived: 1,
+      budget: { total: 1000, spent: 200, remaining: 800, usagePercentage: 20 },
+      recentPurchaseRequests: [],
+    });
+    renderWithQuery(<DashboardPage />);
 
-    expect(screen.getByText('Total Budget')).toBeInTheDocument();
+    expect(await screen.findByText('Total Budget')).toBeInTheDocument();
     expect(screen.getByText('Used Budget')).toBeInTheDocument();
     expect(screen.getByText('Remaining Budget')).toBeInTheDocument();
     expect(screen.getByText('Pending Approvals')).toBeInTheDocument();
+    expect(screen.getByText('20.0%')).toBeInTheDocument();
+    expect(getDashboardSummary).toHaveBeenCalledTimes(1);
   });
 
   it('renders data table rows', () => {

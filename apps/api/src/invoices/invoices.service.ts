@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditAction, AuditEntityType, InvoiceStatus, PurchaseOrderStatus } from '@prisma/client';
+import { AuditAction, AuditEntityType, InvoiceStatus, Prisma, PurchaseOrderStatus } from '@prisma/client';
+import { randomUUID } from 'crypto';
+import { serializableTransaction } from '../common/utils/serializable-transaction.util';
 import { AuditTrailsService } from '../audit-trails/audit-trails.service';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
@@ -39,103 +41,108 @@ export class InvoicesService {
   }
 
   async generateFromPo(purchaseOrderId: string, user: AuthenticatedUser) {
-    const po = await this.prisma.purchaseOrder.findUnique({
-      where: { id: purchaseOrderId },
-      include: { items: true },
-    });
-
-    if (!po) throw new NotFoundException('Purchase Order not found');
-
-    if (po.status !== PurchaseOrderStatus.RECEIVED && po.status !== PurchaseOrderStatus.PARTIALLY_RECEIVED) {
-      throw new BadRequestException('Cannot generate invoice for PO that has not been received');
-    }
-
-    const existingInvoice = await this.prisma.invoice.findFirst({
-      where: { purchaseOrderId: po.id, status: { not: InvoiceStatus.CANCELLED } },
-    });
-
-    if (existingInvoice) {
-      throw new BadRequestException('Active invoice already exists for this PO');
-    }
-
-    const invoiceNumber = `INV-${Date.now()}`;
-    let totalAmount = 0;
-    
-    // Validasi 3-Way Matching: kita invoice berdasarkan received quantity
-    const itemsData = po.items
-      .filter((item) => Number(item.quantityReceived) > 0)
-      .map((item) => {
-        const qty = Number(item.quantityReceived);
-        const price = Number(item.unitPrice);
-        const lineTotal = qty * price;
-        totalAmount += lineTotal;
-
-        return {
-          description: item.description || item.itemNameSnapshot,
-          quantity: qty,
-          unitPrice: price,
-          lineTotal: lineTotal,
-        };
+    return serializableTransaction(this.prisma, async (tx) => {
+      const po = await tx.purchaseOrder.findFirst({
+        where: { id: purchaseOrderId, deletedAt: null },
+        include: { items: true },
       });
 
-    if (itemsData.length === 0) {
-      throw new BadRequestException('No received items to invoice');
-    }
+      if (!po) throw new NotFoundException('Purchase Order not found');
 
-    const invoice = await this.prisma.invoice.create({
-      data: {
-        invoiceNumber,
-        status: InvoiceStatus.UNPAID,
-        issueDate: new Date(),
-        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Net 30
-        totalAmount,
-        currency: po.currency,
-        purchaseOrderId: po.id,
-        supplierId: po.supplierId,
-        items: {
-          create: itemsData,
+      if (po.status !== PurchaseOrderStatus.RECEIVED) {
+        throw new BadRequestException('Invoice can only be generated after the purchase order is fully received');
+      }
+
+      const existingInvoice = await tx.invoice.findFirst({
+        where: { purchaseOrderId: po.id, deletedAt: null, status: { not: InvoiceStatus.CANCELLED } },
+      });
+
+      if (existingInvoice) {
+        throw new BadRequestException('Active invoice already exists for this PO');
+      }
+
+      const invoiceNumber = `INV-${randomUUID()}`;
+      let totalAmount = new Prisma.Decimal(0);
+
+      // Validasi 3-Way Matching: kita invoice berdasarkan received quantity
+      const itemsData = po.items
+        .filter((item) => item.quantityReceived.gt(0))
+        .map((item) => {
+          const qty = item.quantityReceived;
+          const price = item.unitPrice;
+          const lineTotal = qty.mul(price).toDecimalPlaces(2);
+          totalAmount = totalAmount.plus(lineTotal);
+
+          return {
+            description: item.description || item.itemNameSnapshot,
+            quantity: qty,
+            unitPrice: price,
+            lineTotal: lineTotal,
+          };
+        });
+
+      if (itemsData.length === 0) {
+        throw new BadRequestException('No received items to invoice');
+      }
+
+      const invoice = await tx.invoice.create({
+        data: {
+          invoiceNumber,
+          status: InvoiceStatus.UNPAID,
+          issueDate: new Date(),
+          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Net 30
+          totalAmount,
+          currency: po.currency,
+          purchaseOrderId: po.id,
+          supplierId: po.supplierId,
+          items: {
+            create: itemsData,
+          },
         },
-      },
-      include: { items: true },
-    });
+        include: { items: true },
+      });
 
-    await this.auditTrailsService.record({
-      action: AuditAction.CREATE,
-      entityType: AuditEntityType.INVOICE,
-      entityId: invoice.id,
-      entityLabel: invoice.invoiceNumber,
-      actorId: user.id,
-      after: invoice,
-    });
+      await this.auditTrailsService.record({
+        action: AuditAction.CREATE,
+        entityType: AuditEntityType.INVOICE,
+        entityId: invoice.id,
+        entityLabel: invoice.invoiceNumber,
+        actorId: user.id,
+        after: invoice,
+      }, tx);
 
-    return invoice;
+      return invoice;
+    });
   }
 
   async payInvoice(id: string, user: AuthenticatedUser) {
-    const invoice = await this.findOne(id);
+    return serializableTransaction(this.prisma, async (tx) => {
+      const invoice = await tx.invoice.findFirst({ where: { id, deletedAt: null } });
+      if (!invoice) throw new NotFoundException('Invoice not found');
 
-    if (invoice.status !== InvoiceStatus.UNPAID) {
-      throw new BadRequestException('Only UNPAID invoices can be paid');
-    }
+      if (invoice.status !== InvoiceStatus.UNPAID) {
+        throw new BadRequestException('Only UNPAID invoices can be paid');
+      }
 
-    const updated = await this.prisma.invoice.update({
-      where: { id },
-      data: {
-        status: InvoiceStatus.PAID,
-        paidAt: new Date(),
-      },
+      const updated = await tx.invoice.update({
+        where: { id },
+        data: {
+          status: InvoiceStatus.PAID,
+          paidAt: new Date(),
+        },
+      });
+
+      await this.auditTrailsService.record({
+        action: AuditAction.UPDATE,
+        entityType: AuditEntityType.INVOICE,
+        entityId: invoice.id,
+        entityLabel: invoice.invoiceNumber,
+        actorId: user.id,
+        before: { status: InvoiceStatus.UNPAID },
+        after: { status: InvoiceStatus.PAID, paidAt: updated.paidAt },
+      }, tx);
+
+      return updated;
     });
-
-    await this.auditTrailsService.record({
-      action: AuditAction.UPDATE,
-      entityType: AuditEntityType.INVOICE,
-      entityId: invoice.id,
-      entityLabel: invoice.invoiceNumber,
-      actorId: user.id,
-      before: { status: InvoiceStatus.UNPAID },
-      after: { status: InvoiceStatus.PAID, paidAt: updated.paidAt },
-    });
-
-    return updated;
   }
 }

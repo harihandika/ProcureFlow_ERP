@@ -66,14 +66,7 @@ export class ErpIntegrationService {
       });
 
       if (mockResponse.status === ErpSyncStatus.SUCCESS) {
-        await tx.purchaseOrder.update({
-          where: { id: purchaseOrderId },
-          data: {
-            status: PurchaseOrderStatus.ISSUED,
-            erpExternalId: mockResponse.externalId,
-            syncedAt: new Date(),
-          },
-        });
+        await this.markPurchaseOrderSynced(tx, purchaseOrderId, mockResponse.externalId);
       }
 
       return createdLog;
@@ -150,14 +143,7 @@ export class ErpIntegrationService {
       });
 
       if (mockResponse.status === ErpSyncStatus.SUCCESS) {
-        await tx.purchaseOrder.update({
-          where: { id: purchaseOrder.id },
-          data: {
-            status: PurchaseOrderStatus.ISSUED,
-            erpExternalId: mockResponse.externalId,
-            syncedAt: new Date(),
-          },
-        });
+        await this.markPurchaseOrderSynced(tx, purchaseOrder.id, mockResponse.externalId);
       }
 
       return createdRetryLog;
@@ -224,6 +210,20 @@ export class ErpIntegrationService {
     return syncLog;
   }
 
+  private async markPurchaseOrderSynced(tx: Prisma.TransactionClient, id: string, externalId?: string | null) {
+    try {
+      await tx.purchaseOrder.update({
+        where: { id, deletedAt: null, status: { in: [PurchaseOrderStatus.DRAFT, PurchaseOrderStatus.ISSUED] } },
+        data: { status: PurchaseOrderStatus.ISSUED, erpExternalId: externalId, syncedAt: new Date() },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new BadRequestException('Only draft or issued purchase orders can be synced to ERP.');
+      }
+      throw error;
+    }
+  }
+
   private async findSyncablePurchaseOrder(id: string) {
     const purchaseOrder = await this.prisma.purchaseOrder.findFirst({
       where: { id, deletedAt: null },
@@ -242,8 +242,8 @@ export class ErpIntegrationService {
       throw new NotFoundException('Purchase order not found.');
     }
 
-    if (purchaseOrder.status === PurchaseOrderStatus.CANCELLED) {
-      throw new BadRequestException('Cancelled purchase orders cannot be synced to ERP.');
+    if (purchaseOrder.status !== PurchaseOrderStatus.DRAFT && purchaseOrder.status !== PurchaseOrderStatus.ISSUED) {
+      throw new BadRequestException('Only draft or issued purchase orders can be synced to ERP.');
     }
 
     if (!purchaseOrder.items.length) {

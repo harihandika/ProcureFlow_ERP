@@ -15,6 +15,7 @@ import * as bcrypt from 'bcrypt';
 import { AppRole } from '../../src/common/constants/roles';
 
 type EntityName =
+  | 'approval'
   | 'auditTrail'
   | 'budget'
   | 'budgetTransaction'
@@ -54,6 +55,7 @@ function toArray<T>(value?: T | T[]) {
 export class WorkflowPrisma {
   private sequence = 1;
   private data: Record<EntityName, RecordData[]> = {
+    approval: [],
     auditTrail: [],
     budget: [],
     budgetTransaction: [],
@@ -78,6 +80,15 @@ export class WorkflowPrisma {
       name: data.name,
       description: data.description ?? null,
       isSystem: data.isSystem ?? false,
+    }),
+  });
+
+  readonly approval = this.createDelegate('approval', {
+    defaults: (data) => ({
+      purchaseRequestId: data.purchaseRequestId,
+      approverId: data.approverId,
+      decision: data.decision,
+      reason: data.reason ?? null,
     }),
   });
 
@@ -536,7 +547,13 @@ export class WorkflowPrisma {
       count: jest.fn(async ({ where }: { where?: RecordData } = {}) => this.filter(name, where).length),
       update: jest.fn(async ({ where, data }: { where: RecordData; data: RecordData }) => {
         const record = this.findById(name, where.id);
-        Object.assign(record, data, { updatedAt: new Date() });
+        const next = { ...data };
+        for (const [field, value] of Object.entries(data)) {
+          if (value && typeof value === 'object' && ('increment' in value || 'decrement' in value)) {
+            next[field] = 'increment' in value ? decimal(record[field]).plus(value.increment) : decimal(record[field]).minus(value.decrement);
+          }
+        }
+        Object.assign(record, next, { updatedAt: new Date() });
 
         return this.withRelations(name, record);
       }),
@@ -576,6 +593,9 @@ export class WorkflowPrisma {
       if (!where) {
         return true;
       }
+      if (where.AND && !toArray<RecordData>(where.AND).every((condition) => this.filter(name, condition).includes(record))) {
+        return false;
+      }
 
       if (typeof where.id === 'string' && record.id !== where.id) {
         return false;
@@ -607,6 +627,7 @@ export class WorkflowPrisma {
         'purchaseRequestId',
         'requesterId',
         'status',
+        'type',
         'supplierId',
         'warehouseId',
       ]) {
@@ -652,6 +673,9 @@ export class WorkflowPrisma {
   }
 
   private withRelations(name: EntityName, record: RecordData): RecordData {
+    if (name === 'approval') {
+      return { ...record, approver: this.userSummary(record.approverId) };
+    }
     if (name === 'user') {
       return {
         ...record,

@@ -202,10 +202,10 @@ describe('ERP Sync and Audit Trail workflows (e2e)', () => {
     const update = await request(app.getHttpServer())
       .patch(`/api/purchase-orders/${poId}/status`)
       .set('Authorization', `Bearer ${purchasingToken}`)
-      .send({ status: 'DRAFT' })
+      .send({ status: 'CANCELLED' })
       .expect(200);
 
-    expect(update.body.status).toBe('DRAFT');
+    expect(update.body.status).toBe('CANCELLED');
 
     const audits = await request(app.getHttpServer())
       .get('/api/audit-trails')
@@ -219,8 +219,8 @@ describe('ERP Sync and Audit Trail workflows (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
 
-    expect(detail.body.before).toEqual(expect.objectContaining({ status: expect.any(String) }));
-    expect(detail.body.after).toEqual(expect.objectContaining({ status: 'DRAFT' }));
+    expect(detail.body.before).toEqual(expect.objectContaining({ status: 'ISSUED' }));
+    expect(detail.body.after).toEqual(expect.objectContaining({ status: 'CANCELLED' }));
   });
 
   it('keeps ERP sync logs queryable by status', async () => {

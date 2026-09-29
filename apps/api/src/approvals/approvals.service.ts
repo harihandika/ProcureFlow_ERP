@@ -1,5 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { ApprovalDecision, AuditAction, AuditEntityType, Prisma, PurchaseRequestStatus } from '@prisma/client';
+import { ApprovalDecision, AuditAction, AuditEntityType, BudgetTransactionStatus, BudgetTransactionType, Prisma, PurchaseRequestStatus } from '@prisma/client';
+import { randomUUID } from 'crypto';
+import { serializableTransaction } from '../common/utils/serializable-transaction.util';
 import { RejectApprovalDto } from './dto/reject-approval.dto';
 import { AuditTrailsService } from '../audit-trails/audit-trails.service';
 import { AppRole } from '../common/constants/roles';
@@ -105,39 +107,65 @@ export class ApprovalsService {
   }
 
   async approve(id: string, user: AuthenticatedUser) {
-    const purchaseRequest = await this.findSubmittedPurchaseRequest(id);
-    this.ensureCanActOnPurchaseRequest(purchaseRequest, user);
-
-    const updatedPurchaseRequest = await this.prisma.purchaseRequest.update({
-      where: { id: purchaseRequest.id },
-      data: { status: PurchaseRequestStatus.APPROVED },
-      include: approvalPurchaseRequestInclude,
-    });
-
-    await this.recordDecision(updatedPurchaseRequest, user, 'APPROVED');
-
-    const approvals = await this.findApprovals([updatedPurchaseRequest.id]);
-    return this.toApprovalQueueItem(updatedPurchaseRequest, approvals, user);
+    return this.decide(id, user, ApprovalDecision.APPROVED);
   }
 
   async reject(id: string, dto: RejectApprovalDto, user: AuthenticatedUser) {
-    const purchaseRequest = await this.findSubmittedPurchaseRequest(id);
-    this.ensureCanActOnPurchaseRequest(purchaseRequest, user);
-
-    const updatedPurchaseRequest = await this.prisma.purchaseRequest.update({
-      where: { id: purchaseRequest.id },
-      data: { status: PurchaseRequestStatus.REJECTED },
-      include: approvalPurchaseRequestInclude,
-    });
-
-    await this.recordDecision(updatedPurchaseRequest, user, 'REJECTED', dto.reason.trim());
-
-    const approvals = await this.findApprovals([updatedPurchaseRequest.id]);
-    return this.toApprovalQueueItem(updatedPurchaseRequest, approvals, user);
+    return this.decide(id, user, ApprovalDecision.REJECTED, dto.reason.trim());
   }
 
-  private async findSubmittedPurchaseRequest(id: string) {
-    const purchaseRequest = await this.prisma.purchaseRequest.findFirst({
+  private async decide(id: string, user: AuthenticatedUser, decision: ApprovalDecision, reason?: string) {
+    return serializableTransaction(this.prisma, async (tx) => {
+      const purchaseRequest = await this.findSubmittedPurchaseRequest(id, tx);
+      this.ensureCanActOnPurchaseRequest(purchaseRequest, user);
+
+      if (decision === ApprovalDecision.REJECTED) {
+        if (!purchaseRequest.budgetId || !purchaseRequest.budget) {
+          throw new BadRequestException('Purchase request has no budget reservation to release.');
+        }
+        const entries = await tx.budgetTransaction.findMany({
+          where: {
+            purchaseRequestId: id, budgetId: purchaseRequest.budgetId,
+            status: BudgetTransactionStatus.POSTED,
+            type: { in: [BudgetTransactionType.RESERVATION, BudgetTransactionType.RELEASE] },
+          },
+        });
+        const reservation = entries.reduce((amount, entry) =>
+          entry.type === BudgetTransactionType.RESERVATION ? amount.plus(entry.amount) : amount.minus(entry.amount),
+          new Prisma.Decimal(0));
+        if (!reservation.eq(purchaseRequest.totalAmount) || purchaseRequest.budget.reservedAmount.lt(reservation)) {
+          throw new BadRequestException('Budget reservation is inconsistent. Reconcile the reservation before rejecting.');
+        }
+        await tx.budget.update({
+          where: { id: purchaseRequest.budgetId },
+          data: { reservedAmount: { decrement: reservation } },
+        });
+        await tx.budgetTransaction.create({
+          data: {
+            transactionNo: `BGT-REL-${randomUUID()}`,
+            type: BudgetTransactionType.RELEASE, status: BudgetTransactionStatus.POSTED,
+            amount: reservation, currency: purchaseRequest.currency,
+            budgetId: purchaseRequest.budgetId, purchaseRequestId: id, createdById: user.id,
+            description: `Released for rejected purchase request ${purchaseRequest.requestNumber}`,
+          },
+        });
+      }
+
+      const updatedPurchaseRequest = await tx.purchaseRequest.update({
+        where: { id: purchaseRequest.id },
+        data: { status: decision === ApprovalDecision.APPROVED ? PurchaseRequestStatus.APPROVED : PurchaseRequestStatus.REJECTED },
+        include: approvalPurchaseRequestInclude,
+      });
+
+      await this.recordDecision(updatedPurchaseRequest, user, decision, reason, tx);
+
+      const approvals = await this.findApprovals([updatedPurchaseRequest.id], tx);
+      return this.toApprovalQueueItem(updatedPurchaseRequest, approvals, user);
+    });
+  }
+
+  private async findSubmittedPurchaseRequest(id: string, tx: Prisma.TransactionClient) {
+    const purchaseRequest = await tx.purchaseRequest.findFirst({
       where: { id, deletedAt: null },
       include: approvalPurchaseRequestInclude,
     });
@@ -185,8 +213,9 @@ export class ApprovalsService {
     user: AuthenticatedUser,
     decision: ApprovalDecision,
     reason?: string,
+    tx: Prisma.TransactionClient = this.prisma,
   ) {
-    await this.prisma.approval.create({
+    await tx.approval.create({
       data: {
         purchaseRequestId: purchaseRequest.id,
         approverId: user.id,
@@ -207,15 +236,15 @@ export class ApprovalsService {
         approvalDecision: decision,
         reason,
       },
-    });
+    }, tx);
   }
 
-  private async findApprovals(entityIds: string[]) {
+  private async findApprovals(entityIds: string[], tx: Prisma.TransactionClient = this.prisma) {
     if (!entityIds.length) {
       return [];
     }
 
-    return this.prisma.approval.findMany({
+    return tx.approval.findMany({
       where: {
         purchaseRequestId: { in: entityIds },
       },

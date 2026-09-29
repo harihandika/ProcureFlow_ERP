@@ -41,4 +41,11 @@ describe('AuditTrailsService', () => {
 
     await expect(service.findOne('missing-id')).rejects.toThrow('Audit trail record not found.');
   });
+
+  it('propagates transactional audit failures so the business transaction can roll back', async () => {
+    const error = new Error('audit unavailable');
+    const tx = { auditTrail: { create: jest.fn().mockRejectedValue(error) } };
+    const service = new AuditTrailsService(prisma as never);
+    await expect(service.record({ action: AuditAction.CREATE, entityType: AuditEntityType.PURCHASE_ORDER }, tx as never)).rejects.toBe(error);
+  });
 });

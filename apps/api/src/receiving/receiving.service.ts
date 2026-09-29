@@ -7,6 +7,7 @@ import { AuditTrailsService } from '../audit-trails/audit-trails.service';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { getPagination, toPaginatedResult } from '../common/utils/pagination.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { serializableTransaction } from '../common/utils/serializable-transaction.util';
 
 const purchaseOrderInclude = {
   warehouse: {
@@ -108,22 +109,22 @@ export class ReceivingService {
   ) {}
 
   async receive(dto: CreateReceivingDto, user: AuthenticatedUser) {
-    const purchaseOrder = await this.findReceivablePurchaseOrder(dto.purchaseOrderId);
-    const warehouseId = dto.warehouseId ?? purchaseOrder.warehouseId;
+    return serializableTransaction(this.prisma, async (tx) => {
+      const purchaseOrder = await this.findReceivablePurchaseOrder(dto.purchaseOrderId, tx);
+      const warehouseId = dto.warehouseId ?? purchaseOrder.warehouseId;
 
-    if (warehouseId !== purchaseOrder.warehouseId) {
-      throw new BadRequestException('Receiving warehouse must match the purchase order warehouse.');
-    }
+      if (warehouseId !== purchaseOrder.warehouseId) {
+        throw new BadRequestException('Receiving warehouse must match the purchase order warehouse.');
+      }
 
-    const preparedItems = this.prepareReceivingItems(purchaseOrder, dto.items);
-    const quantityByPurchaseOrderItemId = this.aggregateQuantities(preparedItems);
-    this.validateNoOverReceiving(purchaseOrder, quantityByPurchaseOrderItemId);
+      const preparedItems = this.prepareReceivingItems(purchaseOrder, dto.items);
+      const quantityByPurchaseOrderItemId = this.aggregateQuantities(preparedItems);
+      this.validateNoOverReceiving(purchaseOrder, quantityByPurchaseOrderItemId);
 
-    const nextPurchaseOrderStatus = this.getNextPurchaseOrderStatus(purchaseOrder, quantityByPurchaseOrderItemId);
-    const receivingStatus =
-      nextPurchaseOrderStatus === PurchaseOrderStatus.RECEIVED ? ReceivingStatus.FULL : ReceivingStatus.PARTIAL;
+      const nextPurchaseOrderStatus = this.getNextPurchaseOrderStatus(purchaseOrder, quantityByPurchaseOrderItemId);
+      const receivingStatus =
+        nextPurchaseOrderStatus === PurchaseOrderStatus.RECEIVED ? ReceivingStatus.FULL : ReceivingStatus.PARTIAL;
 
-    const receiving = await this.prisma.$transaction(async (tx) => {
       const receiving = await tx.receiving.create({
         data: {
           receivingNumber: this.generateReceivingNumber(),
@@ -166,25 +167,23 @@ export class ReceivingService {
         data: { status: nextPurchaseOrderStatus },
       });
 
+      await this.auditTrailsService.record({
+        action: AuditAction.RECEIVE,
+        entityType: AuditEntityType.RECEIVING,
+        entityId: receiving.id,
+        entityLabel: receiving.receivingNumber,
+        actorId: user.id,
+        after: receiving,
+        metadata: {
+          purchaseOrderId: purchaseOrder.id,
+          poNumber: purchaseOrder.poNumber,
+          status: receiving.status,
+          itemCount: receiving.items.length,
+        },
+      }, tx);
+
       return receiving;
     });
-
-    await this.auditTrailsService.record({
-      action: AuditAction.RECEIVE,
-      entityType: AuditEntityType.RECEIVING,
-      entityId: receiving.id,
-      entityLabel: receiving.receivingNumber,
-      actorId: user.id,
-      after: receiving,
-      metadata: {
-        purchaseOrderId: purchaseOrder.id,
-        poNumber: purchaseOrder.poNumber,
-        status: receiving.status,
-        itemCount: receiving.items.length,
-      },
-    });
-
-    return receiving;
   }
 
   async findOne(id: string) {
@@ -245,8 +244,8 @@ export class ReceivingService {
     });
   }
 
-  private async findReceivablePurchaseOrder(id: string) {
-    const purchaseOrder = await this.prisma.purchaseOrder.findFirst({
+  private async findReceivablePurchaseOrder(id: string, tx: Prisma.TransactionClient) {
+    const purchaseOrder = await tx.purchaseOrder.findFirst({
       where: { id, deletedAt: null },
       include: purchaseOrderInclude,
     });
@@ -255,12 +254,8 @@ export class ReceivingService {
       throw new NotFoundException('Purchase order not found.');
     }
 
-    if (purchaseOrder.status === PurchaseOrderStatus.CANCELLED) {
-      throw new BadRequestException('Cancelled purchase orders cannot be received.');
-    }
-
-    if (purchaseOrder.status === PurchaseOrderStatus.RECEIVED) {
-      throw new BadRequestException('Purchase order is already fully received.');
+    if (purchaseOrder.status !== PurchaseOrderStatus.ISSUED && purchaseOrder.status !== PurchaseOrderStatus.PARTIALLY_RECEIVED) {
+      throw new BadRequestException('Only issued or partially received purchase orders can be received.');
     }
 
     if (!purchaseOrder.items.length) {

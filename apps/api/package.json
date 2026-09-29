@@ -10,6 +10,7 @@
     "test": "jest --config ./jest.config.js",
     "test:watch": "jest --config ./jest.config.js --watch",
     "test:e2e": "jest --config ./test/jest-e2e.config.js",
+    "test:postgres": "jest --config ./test/jest-postgres.config.js --runInBand",
     "test:cov": "jest --config ./jest.config.js --coverage",
     "prisma:generate": "prisma generate --schema ../../prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema ../../prisma/schema.prisma",

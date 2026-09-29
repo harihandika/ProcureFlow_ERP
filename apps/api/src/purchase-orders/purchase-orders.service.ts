@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditAction, AuditEntityType, Prisma, PurchaseOrderStatus, PurchaseRequestStatus } from '@prisma/client';
 import { GeneratePurchaseOrderDto } from './dto/generate-purchase-order.dto';
 import { PurchaseOrderQueryDto } from './dto/purchase-order-query.dto';
@@ -7,6 +7,7 @@ import { AuditTrailsService } from '../audit-trails/audit-trails.service';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { getPagination, toPaginatedResult } from '../common/utils/pagination.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { serializableTransaction } from '../common/utils/serializable-transaction.util';
 
 const purchaseOrderInclude = {
   purchaseRequest: {
@@ -152,89 +153,101 @@ export class PurchaseOrdersService {
   }
 
   async generateFromPurchaseRequest(prId: string, dto: GeneratePurchaseOrderDto, user: AuthenticatedUser) {
-    const purchaseRequest = await this.prisma.purchaseRequest.findFirst({
-      where: { id: prId, deletedAt: null },
-      include: approvedPurchaseRequestInclude,
-    });
+    try {
+      return await serializableTransaction(this.prisma, async (tx) => {
+        const purchaseRequest = await tx.purchaseRequest.findFirst({
+          where: { id: prId, deletedAt: null },
+          include: approvedPurchaseRequestInclude,
+        });
 
-    if (!purchaseRequest) {
-      throw new NotFoundException('Purchase request not found.');
+        if (!purchaseRequest) {
+          throw new NotFoundException('Purchase request not found.');
+        }
+
+        if (purchaseRequest.status !== PurchaseRequestStatus.APPROVED) {
+          throw new BadRequestException('Only approved purchase requests can be converted to purchase orders.');
+        }
+
+        if (!purchaseRequest.items.length) {
+          throw new BadRequestException('Purchase request has no items to convert.');
+        }
+
+        const [supplier, warehouse, existingPurchaseOrder] = await Promise.all([
+          tx.supplier.findFirst({
+            where: { id: dto.supplierId, deletedAt: null, isActive: true },
+          }),
+          tx.warehouse.findFirst({
+            where: { deletedAt: null, isActive: true },
+            orderBy: { name: 'asc' },
+          }),
+          tx.purchaseOrder.findFirst({
+            where: { purchaseRequestId: prId, deletedAt: null },
+          }),
+        ]);
+
+        if (!supplier) {
+          throw new BadRequestException('Supplier does not exist or is inactive.');
+        }
+
+        if (!warehouse) {
+          throw new BadRequestException('At least one active warehouse is required before generating a purchase order.');
+        }
+
+        if (existingPurchaseOrder) {
+          throw new ConflictException('A purchase order has already been generated for this purchase request.');
+        }
+
+        const purchaseOrder = await tx.purchaseOrder.create({
+          data: {
+            poNumber: this.generatePoNumber(),
+            status: PurchaseOrderStatus.DRAFT,
+            expectedDeliveryDate: purchaseRequest.requiredDate,
+            totalAmount: purchaseRequest.totalAmount,
+            currency: purchaseRequest.currency,
+            purchaseRequestId: purchaseRequest.id,
+            supplierId: supplier.id,
+            warehouseId: warehouse.id,
+            createdById: user.id,
+            items: {
+              create: purchaseRequest.items.map((item) => ({
+                purchaseRequestItemId: item.id,
+                itemId: item.itemId,
+                packagingUnitId: item.packagingUnitId,
+                description: item.description,
+                quantityOrdered: item.quantity,
+                quantityReceived: 0,
+                unitPrice: item.estimatedUnitPrice,
+                lineTotal: item.lineTotal,
+                itemSkuSnapshot: item.itemSkuSnapshot,
+                itemNameSnapshot: item.itemNameSnapshot,
+                unitCodeSnapshot: item.unitCodeSnapshot,
+                unitNameSnapshot: item.unitNameSnapshot,
+              })),
+            },
+          },
+          include: purchaseOrderInclude,
+        });
+
+        await this.auditTrailsService.record({
+          action: AuditAction.CREATE,
+          entityType: AuditEntityType.PURCHASE_ORDER,
+          entityId: purchaseOrder.id,
+          entityLabel: purchaseOrder.poNumber,
+          actorId: user.id,
+          after: { status: purchaseOrder.status, purchaseRequestId: purchaseRequest.id, supplierId: supplier.id },
+        }, tx);
+
+        return this.toResponse(purchaseOrder);
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const target = error.meta?.target;
+        if ((Array.isArray(target) && target.includes('purchaseRequestId')) || target === 'PurchaseOrder_active_purchaseRequestId_key') {
+          throw new ConflictException('A purchase order has already been generated for this purchase request.');
+        }
+      }
+      throw error;
     }
-
-    if (purchaseRequest.status !== PurchaseRequestStatus.APPROVED) {
-      throw new BadRequestException('Only approved purchase requests can be converted to purchase orders.');
-    }
-
-    if (!purchaseRequest.items.length) {
-      throw new BadRequestException('Purchase request has no items to convert.');
-    }
-
-    const [supplier, warehouse, existingPurchaseOrder] = await Promise.all([
-      this.prisma.supplier.findFirst({
-        where: { id: dto.supplierId, deletedAt: null, isActive: true },
-      }),
-      this.prisma.warehouse.findFirst({
-        where: { deletedAt: null, isActive: true },
-        orderBy: { name: 'asc' },
-      }),
-      this.prisma.purchaseOrder.findFirst({
-        where: { purchaseRequestId: prId, deletedAt: null },
-      }),
-    ]);
-
-    if (!supplier) {
-      throw new BadRequestException('Supplier does not exist or is inactive.');
-    }
-
-    if (!warehouse) {
-      throw new BadRequestException('At least one active warehouse is required before generating a purchase order.');
-    }
-
-    if (existingPurchaseOrder) {
-      throw new BadRequestException('A purchase order has already been generated for this purchase request.');
-    }
-
-    const purchaseOrder = await this.prisma.purchaseOrder.create({
-      data: {
-        poNumber: this.generatePoNumber(),
-        status: PurchaseOrderStatus.DRAFT,
-        expectedDeliveryDate: purchaseRequest.requiredDate,
-        totalAmount: purchaseRequest.totalAmount,
-        currency: purchaseRequest.currency,
-        purchaseRequestId: purchaseRequest.id,
-        supplierId: supplier.id,
-        warehouseId: warehouse.id,
-        createdById: user.id,
-        items: {
-          create: purchaseRequest.items.map((item) => ({
-            purchaseRequestItemId: item.id,
-            itemId: item.itemId,
-            packagingUnitId: item.packagingUnitId,
-            description: item.description,
-            quantityOrdered: item.quantity,
-            quantityReceived: 0,
-            unitPrice: item.estimatedUnitPrice,
-            lineTotal: item.lineTotal,
-            itemSkuSnapshot: item.itemSkuSnapshot,
-            itemNameSnapshot: item.itemNameSnapshot,
-            unitCodeSnapshot: item.unitCodeSnapshot,
-            unitNameSnapshot: item.unitNameSnapshot,
-          })),
-        },
-      },
-      include: purchaseOrderInclude,
-    });
-
-    await this.auditTrailsService.record({
-      action: AuditAction.CREATE,
-      entityType: AuditEntityType.PURCHASE_ORDER,
-      entityId: purchaseOrder.id,
-      entityLabel: purchaseOrder.poNumber,
-      actorId: user.id,
-      after: { status: purchaseOrder.status, purchaseRequestId: purchaseRequest.id, supplierId: supplier.id },
-    });
-
-    return this.toResponse(purchaseOrder);
   }
 
   async updateStatus(id: string, dto: UpdatePurchaseOrderStatusDto, user: AuthenticatedUser) {
@@ -242,32 +255,46 @@ export class PurchaseOrdersService {
       throw new BadRequestException('Receiving statuses are managed by the receiving module.');
     }
 
-    const purchaseOrder = await this.findPurchaseOrderOrThrow(id);
+    return serializableTransaction(this.prisma, async (tx) => {
+      const purchaseOrder = await this.findPurchaseOrderOrThrow(id, tx);
+      const canIssue = purchaseOrder.status === PurchaseOrderStatus.DRAFT && dto.status === PurchaseOrderStatus.ISSUED;
+      const canCancel = (purchaseOrder.status === PurchaseOrderStatus.DRAFT || purchaseOrder.status === PurchaseOrderStatus.ISSUED)
+        && dto.status === PurchaseOrderStatus.CANCELLED;
+      if (!canIssue && !canCancel) {
+        throw new BadRequestException(`Cannot change purchase order status from ${purchaseOrder.status} to ${dto.status}.`);
+      }
+      if (canCancel) {
+        const receiptCount = await tx.receiving.count({ where: { purchaseOrderId: id, deletedAt: null } });
+        if (receiptCount > 0 || purchaseOrder.items.some((item) => item.quantityReceived.gt(0))) {
+          throw new BadRequestException('Purchase orders with received items cannot be cancelled.');
+        }
+      }
 
-    const updatedPurchaseOrder = await this.prisma.purchaseOrder.update({
-      where: { id },
-      data: {
-        status: dto.status,
-        issueDate: dto.status === PurchaseOrderStatus.ISSUED && !purchaseOrder.issueDate ? new Date() : purchaseOrder.issueDate,
-      },
-      include: purchaseOrderInclude,
+      const updatedPurchaseOrder = await tx.purchaseOrder.update({
+        where: { id },
+        data: {
+          status: dto.status,
+          issueDate: canIssue && !purchaseOrder.issueDate ? new Date() : purchaseOrder.issueDate,
+        },
+        include: purchaseOrderInclude,
+      });
+
+      await this.auditTrailsService.record({
+        action: AuditAction.UPDATE,
+        entityType: AuditEntityType.PURCHASE_ORDER,
+        entityId: updatedPurchaseOrder.id,
+        entityLabel: updatedPurchaseOrder.poNumber,
+        actorId: user.id,
+        before: { status: purchaseOrder.status },
+        after: { status: updatedPurchaseOrder.status },
+      }, tx);
+
+      return this.toResponse(updatedPurchaseOrder);
     });
-
-    await this.auditTrailsService.record({
-      action: AuditAction.UPDATE,
-      entityType: AuditEntityType.PURCHASE_ORDER,
-      entityId: updatedPurchaseOrder.id,
-      entityLabel: updatedPurchaseOrder.poNumber,
-      actorId: user.id,
-      before: { status: purchaseOrder.status },
-      after: { status: updatedPurchaseOrder.status },
-    });
-
-    return this.toResponse(updatedPurchaseOrder);
   }
 
-  private async findPurchaseOrderOrThrow(id: string) {
-    const purchaseOrder = await this.prisma.purchaseOrder.findFirst({
+  private async findPurchaseOrderOrThrow(id: string, tx: Prisma.TransactionClient = this.prisma) {
+    const purchaseOrder = await tx.purchaseOrder.findFirst({
       where: { id, deletedAt: null },
       include: purchaseOrderInclude,
     });

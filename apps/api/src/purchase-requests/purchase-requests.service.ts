@@ -18,6 +18,8 @@ import { AuditTrailsService } from '../audit-trails/audit-trails.service';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { getPagination, toPaginatedResult } from '../common/utils/pagination.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { serializableTransaction } from '../common/utils/serializable-transaction.util';
+import { purchaseRequestReadScope } from '../common/utils/purchase-request-scope.util';
 
 const purchaseRequestInclude = {
   requester: {
@@ -113,10 +115,11 @@ export class PurchaseRequestsService {
     return purchaseRequest;
   }
 
-  async findAll(query: PurchaseRequestQueryDto) {
+  async findAll(query: PurchaseRequestQueryDto, user: AuthenticatedUser) {
     const { page, limit, skip, take } = getPagination(query);
     const where: Prisma.PurchaseRequestWhereInput = {
       deletedAt: null,
+      AND: [purchaseRequestReadScope(user)],
       ...(query.status ? { status: query.status } : {}),
       ...(query.priority ? { priority: query.priority } : {}),
       ...(query.requesterId ? { requesterId: query.requesterId } : {}),
@@ -124,14 +127,14 @@ export class PurchaseRequestsService {
       ...(query.budgetId ? { budgetId: query.budgetId } : {}),
       ...(query.search
         ? {
-            OR: [
-              { requestNumber: { contains: query.search, mode: 'insensitive' } },
-              { title: { contains: query.search, mode: 'insensitive' } },
-              { description: { contains: query.search, mode: 'insensitive' } },
-              { requester: { fullName: { contains: query.search, mode: 'insensitive' } } },
-              { department: { name: { contains: query.search, mode: 'insensitive' } } },
-            ],
-          }
+          OR: [
+            { requestNumber: { contains: query.search, mode: 'insensitive' } },
+            { title: { contains: query.search, mode: 'insensitive' } },
+            { description: { contains: query.search, mode: 'insensitive' } },
+            { requester: { fullName: { contains: query.search, mode: 'insensitive' } } },
+            { department: { name: { contains: query.search, mode: 'insensitive' } } },
+          ],
+        }
         : {}),
     };
 
@@ -149,31 +152,36 @@ export class PurchaseRequestsService {
     return toPaginatedResult(data, total, page, limit);
   }
 
-  async findOne(id: string) {
-    return this.findPurchaseRequestOrThrow(id);
+  async findOne(id: string, user: AuthenticatedUser) {
+    const request = await this.prisma.purchaseRequest.findFirst({
+      where: { id, deletedAt: null, AND: [purchaseRequestReadScope(user)] },
+      include: purchaseRequestInclude,
+    });
+    if (!request) throw new NotFoundException('Purchase request not found.');
+    return request;
   }
 
   async updateDraft(id: string, dto: UpdatePurchaseRequestDto, user: AuthenticatedUser) {
-    const purchaseRequest = await this.findPurchaseRequestOrThrow(id);
-    this.ensureRequesterCanMutate(purchaseRequest, user);
-    this.ensureDraft(purchaseRequest.status);
+    return serializableTransaction(this.prisma, async (tx) => {
+      const purchaseRequest = await this.findPurchaseRequestOrThrow(id, tx);
+      this.ensureRequesterCanMutate(purchaseRequest, user);
+      this.ensureDraft(purchaseRequest.status);
 
-    const departmentId = dto.departmentId ?? purchaseRequest.departmentId;
-    await this.validateDepartment(departmentId);
+      const departmentId = dto.departmentId ?? purchaseRequest.departmentId;
+      await this.validateDepartment(departmentId, tx);
 
-    const budgetId = dto.budgetId ?? purchaseRequest.budgetId ?? undefined;
-    const budget = budgetId ? await this.validateBudget(budgetId, departmentId) : undefined;
-    const preparedItems = dto.items === undefined ? undefined : await this.prepareItems(dto.items);
-    const totalAmount = preparedItems === undefined ? purchaseRequest.totalAmount : this.sumLineTotals(preparedItems);
+      const budgetId = dto.budgetId ?? purchaseRequest.budgetId ?? undefined;
+      const budget = budgetId ? await this.validateBudget(budgetId, departmentId, tx) : undefined;
+      const preparedItems = dto.items === undefined ? undefined : await this.prepareItems(dto.items, tx);
+      const totalAmount = preparedItems === undefined ? purchaseRequest.totalAmount : this.sumLineTotals(preparedItems);
 
-    return this.prisma.$transaction(async (tx) => {
       if (preparedItems !== undefined) {
         await tx.purchaseRequestItem.deleteMany({
           where: { purchaseRequestId: id },
         });
       }
 
-      return tx.purchaseRequest.update({
+      const updated = await tx.purchaseRequest.update({
         where: { id },
         data: {
           ...(dto.title !== undefined ? { title: dto.title.trim() } : {}),
@@ -194,18 +202,27 @@ export class PurchaseRequestsService {
         },
         include: purchaseRequestInclude,
       });
+      await this.auditTrailsService.record({
+        action: AuditAction.UPDATE,
+        entityType: AuditEntityType.PURCHASE_REQUEST,
+        entityId: updated.id,
+        entityLabel: updated.requestNumber,
+        actorId: user.id,
+        before: purchaseRequest,
+        after: updated,
+      }, tx);
+      return updated;
     });
   }
 
   async addItems(id: string, dto: AddPurchaseRequestItemsDto, user: AuthenticatedUser) {
-    const purchaseRequest = await this.findPurchaseRequestOrThrow(id);
-    this.ensureRequesterCanMutate(purchaseRequest, user);
-    this.ensureDraft(purchaseRequest.status);
+    return serializableTransaction(this.prisma, async (tx) => {
+      const purchaseRequest = await this.findPurchaseRequestOrThrow(id, tx);
+      this.ensureRequesterCanMutate(purchaseRequest, user);
+      this.ensureDraft(purchaseRequest.status);
+      const preparedItems = await this.prepareItems(dto.items, tx);
+      const addedAmount = this.sumLineTotals(preparedItems);
 
-    const preparedItems = await this.prepareItems(dto.items);
-    const addedAmount = this.sumLineTotals(preparedItems);
-
-    return this.prisma.$transaction(async (tx) => {
       await tx.purchaseRequestItem.createMany({
         data: preparedItems.map((preparedItem) => ({
           purchaseRequestId: id,
@@ -213,46 +230,49 @@ export class PurchaseRequestsService {
         })),
       });
 
-      return tx.purchaseRequest.update({
+      const updated = await tx.purchaseRequest.update({
         where: { id },
         data: {
           totalAmount: purchaseRequest.totalAmount.plus(addedAmount),
         },
         include: purchaseRequestInclude,
       });
+      await this.auditTrailsService.record({
+        action: AuditAction.UPDATE,
+        entityType: AuditEntityType.PURCHASE_REQUEST,
+        entityId: updated.id,
+        entityLabel: updated.requestNumber,
+        actorId: user.id,
+        before: { totalAmount: purchaseRequest.totalAmount, itemCount: purchaseRequest.items.length },
+        after: { totalAmount: updated.totalAmount, itemCount: updated.items.length },
+      }, tx);
+      return updated;
     });
   }
 
   async submit(id: string, dto: SubmitPurchaseRequestDto, user: AuthenticatedUser) {
-    const purchaseRequest = await this.findPurchaseRequestOrThrow(id);
-    this.ensureRequesterCanMutate(purchaseRequest, user);
-    this.ensureDraft(purchaseRequest.status);
+    return serializableTransaction(this.prisma, async (tx) => {
+      const purchaseRequest = await this.findPurchaseRequestOrThrow(id, tx);
+      this.ensureRequesterCanMutate(purchaseRequest, user);
+      this.ensureDraft(purchaseRequest.status);
 
-    if (!purchaseRequest.items.length) {
-      throw new BadRequestException('Purchase request must have at least one item before submission.');
-    }
+      if (!purchaseRequest.items.length) {
+        throw new BadRequestException('Purchase request must have at least one item before submission.');
+      }
 
-    const budgetId = dto.budgetId ?? purchaseRequest.budgetId;
-    if (!budgetId) {
-      throw new BadRequestException('Budget is required before submitting a purchase request.');
-    }
+      const budgetId = dto.budgetId ?? purchaseRequest.budgetId;
+      if (!budgetId) {
+        throw new BadRequestException('Budget is required before submitting a purchase request.');
+      }
 
-    const isSameBudget = purchaseRequest.budget && purchaseRequest.budget.id === budgetId;
-    const budget = isSameBudget 
-      ? purchaseRequest.budget! 
-      : await this.validateBudget(budgetId, purchaseRequest.departmentId);
+      const budget = await this.validateBudget(budgetId, purchaseRequest.departmentId, tx);
 
-    if (isSameBudget && budget.status !== BudgetStatus.ACTIVE) {
-      throw new BadRequestException('Budget does not exist or is not active.');
-    }
+      const availableAmount = this.getAvailableBudgetAmount(budget);
 
-    const availableAmount = this.getAvailableBudgetAmount(budget);
+      if (purchaseRequest.totalAmount.gt(availableAmount)) {
+        throw new BadRequestException('Purchase request total exceeds available budget.');
+      }
 
-    if (purchaseRequest.totalAmount.gt(availableAmount)) {
-      throw new BadRequestException('Purchase request total exceeds available budget.');
-    }
-
-    const submittedPurchaseRequest = await this.prisma.$transaction(async (tx) => {
       await tx.budget.update({
         where: { id: budget.id },
         data: {
@@ -274,7 +294,7 @@ export class PurchaseRequestsService {
         },
       });
 
-      return tx.purchaseRequest.update({
+      const submittedPurchaseRequest = await tx.purchaseRequest.update({
         where: { id },
         data: {
           status: PurchaseRequestStatus.SUBMITTED,
@@ -284,23 +304,22 @@ export class PurchaseRequestsService {
         },
         include: purchaseRequestInclude,
       });
-    });
+      await this.auditTrailsService.record({
+        action: AuditAction.SUBMIT,
+        entityType: AuditEntityType.PURCHASE_REQUEST,
+        entityId: submittedPurchaseRequest.id,
+        entityLabel: submittedPurchaseRequest.requestNumber,
+        actorId: user.id,
+        before: { status: PurchaseRequestStatus.DRAFT },
+        after: { status: submittedPurchaseRequest.status, budgetId: budget.id },
+      }, tx);
 
-    await this.auditTrailsService.record({
-      action: AuditAction.SUBMIT,
-      entityType: AuditEntityType.PURCHASE_REQUEST,
-      entityId: submittedPurchaseRequest.id,
-      entityLabel: submittedPurchaseRequest.requestNumber,
-      actorId: user.id,
-      before: { status: PurchaseRequestStatus.DRAFT },
-      after: { status: submittedPurchaseRequest.status, budgetId: budget.id },
+      return submittedPurchaseRequest;
     });
-
-    return submittedPurchaseRequest;
   }
 
-  private async findPurchaseRequestOrThrow(id: string) {
-    const purchaseRequest = await this.prisma.purchaseRequest.findFirst({
+  private async findPurchaseRequestOrThrow(id: string, tx: Prisma.TransactionClient = this.prisma) {
+    const purchaseRequest = await tx.purchaseRequest.findFirst({
       where: { id, deletedAt: null },
       include: purchaseRequestInclude,
     });
@@ -324,8 +343,8 @@ export class PurchaseRequestsService {
     }
   }
 
-  private async validateDepartment(departmentId: string) {
-    const department = await this.prisma.department.findFirst({
+  private async validateDepartment(departmentId: string, tx: Prisma.TransactionClient = this.prisma) {
+    const department = await tx.department.findFirst({
       where: {
         id: departmentId,
         deletedAt: null,
@@ -338,8 +357,8 @@ export class PurchaseRequestsService {
     }
   }
 
-  private async validateBudget(budgetId: string, departmentId: string) {
-    const budget = await this.prisma.budget.findFirst({
+  private async validateBudget(budgetId: string, departmentId: string, tx: Prisma.TransactionClient = this.prisma) {
+    const budget = await tx.budget.findFirst({
       where: {
         id: budgetId,
         deletedAt: null,
@@ -358,17 +377,17 @@ export class PurchaseRequestsService {
     return budget;
   }
 
-  private async prepareItems(items: PurchaseRequestItemInputDto[]) {
+  private async prepareItems(items: PurchaseRequestItemInputDto[], tx: Prisma.TransactionClient = this.prisma) {
     if (!items.length) return [];
 
     const itemIds = [...new Set(items.map((i) => i.itemId))];
     const unitIds = [...new Set(items.map((i) => i.packagingUnitId))];
 
     const [dbItems, dbUnits] = await Promise.all([
-      this.prisma.item.findMany({
+      tx.item.findMany({
         where: { id: { in: itemIds }, deletedAt: null, isActive: true },
       }),
-      this.prisma.packagingUnit.findMany({
+      tx.packagingUnit.findMany({
         where: { id: { in: unitIds }, deletedAt: null, isActive: true },
       }),
     ]);

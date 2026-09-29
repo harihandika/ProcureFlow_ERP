@@ -18,6 +18,8 @@ export class AiProxyService {
   }
 
   async auditPr(prId: string): Promise<AuditPrResponseDto> {
+    const serviceKey = this.configService.get<string>('AI_SERVICE_API_KEY');
+    if (!serviceKey) throw new ServiceUnavailableException('AI service authentication is not configured.');
     const url = `${this.pythonAiUrl}/ai/audit-pr`;
     
     try {
@@ -25,7 +27,7 @@ export class AiProxyService {
         this.httpService.post<AuditPrResponseDto>(
           url,
           { prId },
-          { timeout: 35000 }
+          { timeout: 35000, headers: { 'X-AI-Service-Key': serviceKey } }
         ).pipe(
           catchError((error: AxiosError) => {
             this.logger.error(`AI Service Request Failed: ${error.message}`, error.stack);
@@ -35,7 +37,9 @@ export class AiProxyService {
             }
             if (error.response) {
               const status = error.response.status;
-              const detail = (error.response.data as any)?.detail || 'Error dari layanan AI';
+              const data: unknown = error.response.data;
+              const detail = typeof data === 'object' && data !== null && 'detail' in data && typeof data.detail === 'string'
+                ? data.detail : 'Error dari layanan AI';
               if (status === 404) {
                 throw new NotFoundException(detail);
               }

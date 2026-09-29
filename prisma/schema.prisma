@@ -459,6 +459,7 @@ model PurchaseRequestItem {
 }
 
 model PurchaseOrder {
+  // Active PR uniqueness is enforced by partial SQL index in 20260927000100_active_po_unique.
   id                   String              @id @default(uuid()) @db.Uuid
   poNumber             String              @unique @db.VarChar(80)
   status               PurchaseOrderStatus @default(DRAFT)
