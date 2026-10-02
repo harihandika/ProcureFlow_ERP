@@ -233,17 +233,19 @@ npm run test:e2e
 | `npm run web:test`     | Frontend component and integration tests |
 | `npm run test:e2e`     | Playwright browser E2E flow              |
 
-## Deployment Summary
+## Deployment Options
 
-| Layer            | Target                  |
-| ---------------- | ----------------------- |
-| Frontend         | Vercel                  |
-| Backend          | Railway                 |
-| Database         | Railway PostgreSQL      |
-| Prisma Migration | `prisma migrate deploy` |
-| CI/CD            | GitHub Actions          |
+ProcureFlow ERP supports multiple deployment targets:
 
-Production deployment should run database migrations before starting the backend application.
+| Deployment Target | Frontend | Backend API | AI Engine | Database |
+| :--- | :--- | :--- | :--- | :--- |
+| **GCP (Production)** | Google Cloud Run | Google Cloud Run | Google Cloud Run | Google Cloud SQL |
+| **100% Free-Tier** | Vercel (Hobby) | Render / Koyeb | Render / Koyeb | Neon.tech / Supabase |
+| **Free VPS (Always Free)** | Docker on OCI | Docker on OCI | Docker on OCI | Docker PostgreSQL |
+| **PaaS** | Vercel | Railway | Railway | Railway PostgreSQL |
+
+For detailed step-by-step instructions, environment variables, and Docker setups, refer to the [Deployment Guide](docs/deployment-guide.md).
+
 
 ## Portfolio Value
 
@@ -268,6 +270,7 @@ This project is designed to show practical fullstack engineering skills:
 - [API Overview](docs/api-overview.md)
 - [Testing Guide](docs/testing-guide.md)
 - [Deployment Guide](docs/deployment-guide.md)
+- [Transaction Integrity, PR Access, and AI Authentication](docs/transaction-integrity.md)
 
 ## License
 
