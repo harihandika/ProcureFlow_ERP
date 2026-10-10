@@ -39,8 +39,8 @@ export class BudgetsController {
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update budget metadata and status. Admin or Finance only.' })
-  update(@Param('id') id: string, @Body() dto: UpdateBudgetDto) {
-    return this.budgetsService.update(id, dto);
+  update(@Param('id') id: string, @Body() dto: UpdateBudgetDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.budgetsService.update(id, dto, user.id);
   }
 
   @Get(':id/transactions')

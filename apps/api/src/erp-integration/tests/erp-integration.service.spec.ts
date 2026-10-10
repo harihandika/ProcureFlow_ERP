@@ -6,8 +6,12 @@ describe('ErpIntegrationService', () => {
     erpSyncLog: {
       create: jest.fn(),
       update: jest.fn(),
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      aggregate: jest.fn(),
     },
     purchaseOrder: {
+      findFirst: jest.fn(),
       update: jest.fn(),
     },
   };
@@ -84,6 +88,10 @@ describe('ErpIntegrationService', () => {
     jest.clearAllMocks();
     prisma.$transaction.mockImplementation((callback: (txClient: typeof tx) => unknown) => callback(tx));
     prisma.erpSyncLog.aggregate.mockResolvedValue({ _max: { attemptNo: null } });
+    tx.erpSyncLog.aggregate.mockImplementation((args: unknown) => prisma.erpSyncLog.aggregate(args));
+    tx.erpSyncLog.findUnique.mockImplementation((args: unknown) => prisma.erpSyncLog.findUnique(args));
+    tx.erpSyncLog.findFirst.mockResolvedValue(null);
+    tx.purchaseOrder.findFirst.mockImplementation((args: unknown) => prisma.purchaseOrder.findFirst(args));
   });
 
   it('syncs PO to mock ERP successfully and records audit', async () => {
@@ -120,6 +128,7 @@ describe('ErpIntegrationService', () => {
         entityType: 'PURCHASE_ORDER',
         entityId: 'po-id',
       }),
+      tx,
     );
   });
 
@@ -147,6 +156,7 @@ describe('ErpIntegrationService', () => {
   });
 
   it('retries failed sync logs', async () => {
+    prisma.erpSyncLog.aggregate.mockResolvedValue({ _max: { attemptNo: 1 } });
     prisma.erpSyncLog.findUnique.mockResolvedValue({
       id: 'failed-log-id',
       status: ErpSyncStatus.FAILED,
@@ -183,6 +193,7 @@ describe('ErpIntegrationService', () => {
         action: 'RETRY_ERP_SYNC',
         entityType: 'ERP_SYNC_LOG',
       }),
+      tx,
     );
   });
 

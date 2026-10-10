@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from google import genai
 from pydantic import ValidationError
 
-from config import GEMINI_API_KEY
+from config import GEMINI_API_KEY, GEMINI_MODEL
 from db.connection import get_db
 from db.queries import get_pr_with_items, get_budget_data
 from schemas.audit_pr_schema import AuditPrResponse
@@ -52,12 +52,12 @@ def audit_pr(pr_id: str) -> dict:
     )
 
     # 3. Call Gemini API
-    if not GEMINI_CLIENT:
-        raise HTTPException(status_code=503, detail="Layanan AI belum dikonfigurasi (API Key hilang).")
+    if not GEMINI_CLIENT or not GEMINI_MODEL:
+        raise HTTPException(status_code=503, detail="Layanan AI belum dikonfigurasi.")
 
     try:
         response = GEMINI_CLIENT.models.generate_content(
-            model="gemini-1.5-flash",
+            model=GEMINI_MODEL,
             contents=prompt,
             config={
                 "response_mime_type": "application/json",
@@ -77,7 +77,7 @@ def audit_pr(pr_id: str) -> dict:
     except HTTPException:
         # Re-raise HTTPException agar tidak tertangkap block Exception di bawah
         raise
-    except ValidationError as ve:
+    except ValidationError:
         logging.exception("Validation error on Gemini response:")
         raise HTTPException(status_code=500, detail="Struktur data dari AI tidak sesuai.")
     except Exception as e:
@@ -86,4 +86,4 @@ def audit_pr(pr_id: str) -> dict:
         if "429" in error_msg or "quota" in error_msg:
             raise HTTPException(status_code=429, detail="Kuota AI harian tercapai. Silakan coba lagi besok.")
         else:
-            raise HTTPException(status_code=503, detail=f"Layanan AI sedang tidak tersedia: {str(e)}")
+            raise HTTPException(status_code=503, detail="Layanan AI sedang tidak tersedia.")

@@ -42,7 +42,7 @@ const config: Config = {
         sm: 'calc(var(--radius) - 4px)',
       },
       fontFamily: {
-        sans: ['var(--font-sans)', 'sans-serif'],
+        sans: ['system-ui', 'Arial', 'sans-serif'],
       },
       boxShadow: {
         enterprise: '0 16px 40px rgba(15, 23, 42, 0.08)',

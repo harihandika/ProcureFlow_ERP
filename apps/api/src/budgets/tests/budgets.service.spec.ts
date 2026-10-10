@@ -3,13 +3,17 @@ import { BudgetsService } from '../budgets.service';
 
 describe('BudgetsService', () => {
   const tx = {
+    department: { findFirst: jest.fn() },
     budget: {
       create: jest.fn(),
+      findFirst: jest.fn(),
       update: jest.fn(),
     },
     budgetTransaction: {
       create: jest.fn(),
+      count: jest.fn(),
     },
+    purchaseRequest: { count: jest.fn() },
   };
 
   const prisma = {
@@ -53,10 +57,15 @@ describe('BudgetsService', () => {
     createdBy: { id: 'finance-id', email: 'finance@procureflow.test', fullName: 'Faris Finance' },
     approvedBy: null,
   };
+  const auditTrailsService = { record: jest.fn() };
 
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.$transaction.mockImplementation((callback: (txClient: typeof tx) => unknown) => callback(tx));
+    tx.budget.findFirst.mockImplementation((args: unknown) => prisma.budget.findFirst(args));
+    tx.department.findFirst.mockImplementation((args: unknown) => prisma.department.findFirst(args));
+    tx.budgetTransaction.count.mockResolvedValue(0);
+    tx.purchaseRequest.count.mockResolvedValue(0);
   });
 
   it('creates a budget with an initial allocation transaction', async () => {
@@ -65,7 +74,7 @@ describe('BudgetsService', () => {
     tx.budget.create.mockResolvedValue(baseBudget);
     tx.budgetTransaction.create.mockResolvedValue({ id: 'transaction-id' });
 
-    const service = new BudgetsService(prisma as never);
+    const service = new BudgetsService(prisma as never, auditTrailsService as never);
     const result = await service.create(
       {
         code: 'bgt-it-2026',
@@ -107,7 +116,7 @@ describe('BudgetsService', () => {
     prisma.department.findFirst.mockResolvedValue({ id: 'department-id' });
     prisma.budget.findFirst.mockResolvedValue({ id: 'existing-budget-id' });
 
-    const service = new BudgetsService(prisma as never);
+    const service = new BudgetsService(prisma as never, auditTrailsService as never);
 
     await expect(
       service.create({
@@ -122,7 +131,7 @@ describe('BudgetsService', () => {
   });
 
   it('rejects zero adjustment amounts', async () => {
-    const service = new BudgetsService(prisma as never);
+    const service = new BudgetsService(prisma as never, auditTrailsService as never);
 
     await expect(service.adjust('budget-id', { amount: 0 })).rejects.toThrow('Adjustment amount cannot be zero.');
   });
@@ -136,7 +145,7 @@ describe('BudgetsService', () => {
       consumedAmount: new Prisma.Decimal(0),
     });
 
-    const service = new BudgetsService(prisma as never);
+    const service = new BudgetsService(prisma as never, auditTrailsService as never);
 
     await expect(service.adjust('budget-id', { amount: -1 })).rejects.toThrow(
       'Allocated amount cannot be lower than reserved, committed, and consumed amount.',

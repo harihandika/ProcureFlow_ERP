@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { BudgetStatus, BudgetTransactionStatus, BudgetTransactionType, Prisma } from '@prisma/client';
+import { AuditAction, AuditEntityType, BudgetStatus, BudgetTransactionStatus, BudgetTransactionType, Prisma } from '@prisma/client';
+import { AuditTrailsService } from '../audit-trails/audit-trails.service';
+import { serializableTransaction } from '../common/utils/serializable-transaction.util';
 import { BudgetAdjustmentDto } from './dto/budget-adjustment.dto';
 import { BudgetQueryDto } from './dto/budget-query.dto';
 import { BudgetTransactionQueryDto } from './dto/budget-transaction-query.dto';
@@ -36,7 +38,7 @@ type BudgetWithRelations = Prisma.BudgetGetPayload<{ include: typeof budgetInclu
 
 @Injectable()
 export class BudgetsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly auditTrailsService: AuditTrailsService) {}
 
   async create(dto: CreateBudgetDto, actorId?: string) {
     await this.validateDepartment(dto.departmentId);
@@ -131,42 +133,51 @@ export class BudgetsService {
     return this.toBudgetResponse(budget);
   }
 
-  async update(id: string, dto: UpdateBudgetDto) {
-    const currentBudget = await this.findBudgetOrThrow(id);
-    const nextDepartmentId = dto.departmentId ?? currentBudget.departmentId;
-    const nextFiscalYear = dto.fiscalYear ?? currentBudget.fiscalYear;
-    const nextPeriod = dto.period !== undefined ? dto.period : currentBudget.period ?? undefined;
+  async update(id: string, dto: UpdateBudgetDto, actorId?: string) {
+    return serializableTransaction(this.prisma, async (tx) => {
+      const currentBudget = await this.findBudgetOrThrow(id, tx);
+      const nextDepartmentId = dto.departmentId ?? currentBudget.departmentId;
+      const nextFiscalYear = dto.fiscalYear ?? currentBudget.fiscalYear;
+      const nextPeriod = dto.period !== undefined ? dto.period : currentBudget.period ?? undefined;
+      const nextCurrency = dto.currency === undefined ? currentBudget.currency : this.normalizeCurrency(dto.currency);
 
-    if (dto.departmentId) {
-      await this.validateDepartment(dto.departmentId);
-    }
+      if (dto.departmentId) await this.validateDepartment(dto.departmentId, tx);
+      if (nextDepartmentId !== currentBudget.departmentId || nextCurrency !== currentBudget.currency) {
+        const [transactionCount, requestCount] = await Promise.all([
+          tx.budgetTransaction.count({ where: { budgetId: id } }),
+          tx.purchaseRequest.count({ where: { budgetId: id } }),
+        ]);
+        if (transactionCount || requestCount || this.getUsedAmount(currentBudget).gt(0)) {
+          throw new BadRequestException('Department or currency cannot change after the budget has been used.');
+        }
+      }
+      if (nextDepartmentId !== currentBudget.departmentId || nextFiscalYear !== currentBudget.fiscalYear ||
+        this.normalizePeriod(nextPeriod) !== currentBudget.period) {
+        await this.validateBudgetPeriodUniqueness(nextDepartmentId, nextFiscalYear, nextPeriod, id, tx);
+      }
+      this.validateStatusChange(currentBudget, dto.status);
 
-    if (
-      nextDepartmentId !== currentBudget.departmentId ||
-      nextFiscalYear !== currentBudget.fiscalYear ||
-      this.normalizePeriod(nextPeriod) !== currentBudget.period
-    ) {
-      await this.validateBudgetPeriodUniqueness(nextDepartmentId, nextFiscalYear, nextPeriod, id);
-    }
-
-    this.validateStatusChange(currentBudget, dto.status);
-
-    const updatedBudget = await this.prisma.budget.update({
-      where: { id },
-      data: {
-        ...(dto.code ? { code: dto.code.trim().toUpperCase() } : {}),
-        ...(dto.name ? { name: dto.name.trim() } : {}),
-        ...(dto.fiscalYear !== undefined ? { fiscalYear: dto.fiscalYear } : {}),
-        ...(dto.period !== undefined ? { period: this.normalizePeriod(dto.period) } : {}),
-        ...(dto.currency !== undefined ? { currency: this.normalizeCurrency(dto.currency) } : {}),
-        ...(dto.status !== undefined ? { status: dto.status } : {}),
-        ...(dto.description !== undefined ? { description: dto.description } : {}),
-        ...(dto.departmentId !== undefined ? { departmentId: dto.departmentId } : {}),
-      },
-      include: budgetInclude,
+      const updatedBudget = await tx.budget.update({
+        where: { id },
+        data: {
+          ...(dto.code ? { code: dto.code.trim().toUpperCase() } : {}),
+          ...(dto.name ? { name: dto.name.trim() } : {}),
+          ...(dto.fiscalYear !== undefined ? { fiscalYear: dto.fiscalYear } : {}),
+          ...(dto.period !== undefined ? { period: this.normalizePeriod(dto.period) } : {}),
+          ...(dto.currency !== undefined ? { currency: this.normalizeCurrency(dto.currency) } : {}),
+          ...(dto.status !== undefined ? { status: dto.status } : {}),
+          ...(dto.description !== undefined ? { description: dto.description } : {}),
+          ...(dto.departmentId !== undefined ? { departmentId: dto.departmentId } : {}),
+        },
+        include: budgetInclude,
+      });
+      await this.auditTrailsService.record({
+        action: AuditAction.UPDATE, entityType: AuditEntityType.BUDGET,
+        entityId: id, entityLabel: updatedBudget.code, actorId,
+        before: currentBudget, after: updatedBudget,
+      }, tx);
+      return this.toBudgetResponse(updatedBudget);
     });
-
-    return this.toBudgetResponse(updatedBudget);
   }
 
   async findTransactions(id: string, query: BudgetTransactionQueryDto) {
@@ -207,16 +218,13 @@ export class BudgetsService {
       throw new BadRequestException('Adjustment amount cannot be zero.');
     }
 
-    const budget = await this.findBudgetOrThrow(id);
-
-    if (budget.status === BudgetStatus.CLOSED || budget.status === BudgetStatus.CANCELLED) {
-      throw new BadRequestException('Closed or cancelled budgets cannot be adjusted.');
-    }
-
-    const nextAllocatedAmount = budget.allocatedAmount.plus(amount);
-    this.validateAllocatedAmountCoversUsage(budget, nextAllocatedAmount);
-
-    const updatedBudget = await this.prisma.$transaction(async (tx) => {
+    return serializableTransaction(this.prisma, async (tx) => {
+      const budget = await this.findBudgetOrThrow(id, tx);
+      if (budget.status === BudgetStatus.CLOSED || budget.status === BudgetStatus.CANCELLED) {
+        throw new BadRequestException('Closed or cancelled budgets cannot be adjusted.');
+      }
+      const nextAllocatedAmount = budget.allocatedAmount.plus(amount);
+      this.validateAllocatedAmountCoversUsage(budget, nextAllocatedAmount);
       const updated = await tx.budget.update({
         where: { id },
         data: { allocatedAmount: nextAllocatedAmount },
@@ -235,15 +243,18 @@ export class BudgetsService {
           createdById: actorId,
         },
       });
-
-      return updated;
+      await this.auditTrailsService.record({
+        action: AuditAction.UPDATE, entityType: AuditEntityType.BUDGET,
+        entityId: id, entityLabel: updated.code, actorId,
+        before: { allocatedAmount: budget.allocatedAmount },
+        after: { allocatedAmount: updated.allocatedAmount },
+      }, tx);
+      return this.toBudgetResponse(updated);
     });
-
-    return this.toBudgetResponse(updatedBudget);
   }
 
-  private async findBudgetOrThrow(id: string) {
-    const budget = await this.prisma.budget.findFirst({
+  private async findBudgetOrThrow(id: string, tx: Prisma.TransactionClient = this.prisma) {
+    const budget = await tx.budget.findFirst({
       where: { id, deletedAt: null },
     });
 
@@ -254,8 +265,8 @@ export class BudgetsService {
     return budget;
   }
 
-  private async validateDepartment(departmentId: string) {
-    const department = await this.prisma.department.findFirst({
+  private async validateDepartment(departmentId: string, tx: Prisma.TransactionClient = this.prisma) {
+    const department = await tx.department.findFirst({
       where: {
         id: departmentId,
         deletedAt: null,
@@ -273,8 +284,9 @@ export class BudgetsService {
     fiscalYear: number,
     period?: string | null,
     excludeBudgetId?: string,
+    tx: Prisma.TransactionClient = this.prisma,
   ) {
-    const existingBudget = await this.prisma.budget.findFirst({
+    const existingBudget = await tx.budget.findFirst({
       where: {
         departmentId,
         fiscalYear,

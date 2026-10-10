@@ -8,6 +8,7 @@ import { PurchaseOrdersService } from '../src/purchase-orders/purchase-orders.se
 import { ReceivingService } from '../src/receiving/receiving.service';
 import { InvoicesService } from '../src/invoices/invoices.service';
 import { ErpIntegrationService } from '../src/erp-integration/erp-integration.service';
+import { BudgetsService } from '../src/budgets/budgets.service';
 import { AuthenticatedUser } from '../src/common/interfaces/authenticated-user.interface';
 
 // This suite never truncates tables or runs migrations. Use an isolated, migrated local test database.
@@ -27,6 +28,7 @@ describe('PostgreSQL transaction integrity', () => {
       po: new PurchaseOrdersService(client, audit), receiving: new ReceivingService(client, audit),
       invoices: new InvoicesService(client, audit),
       erp: new ErpIntegrationService(client, audit),
+      budgets: new BudgetsService(client, audit),
     };
   };
   const currentServices = () => services(db as PrismaService);
@@ -106,6 +108,117 @@ describe('PostgreSQL transaction integrity', () => {
     }
   }
   const successCount = (results: PromiseSettledResult<unknown>[]) => results.filter((r) => r.status === 'fulfilled').length;
+
+  it('adds both concurrent budget adjustments without losing one', async () => {
+    const b = await budget(100);
+    const results = await overlap('Budget',
+      (s) => s.budgets.adjust(b.id, { amount: 10 }, user.id),
+      (s) => s.budgets.adjust(b.id, { amount: 20 }, user.id));
+    expect(successCount(results)).toBe(2);
+    expect((await db.budget.findUniqueOrThrow({ where: { id: b.id } })).allocatedAmount).toEqual(new Prisma.Decimal(130));
+    expect(await db.budgetTransaction.count({ where: { budgetId: b.id, type: 'ADJUSTMENT' } })).toBe(2);
+  });
+
+  it('rejects a concurrent reduction that would underfund reserved budget', async () => {
+    const b = await budget(100);
+    const pr = await draft(b.id);
+    await currentServices().pr.submit(pr.id, {}, user);
+    const results = await overlap('Budget',
+      (s) => s.budgets.adjust(b.id, { amount: -10 }, user.id),
+      (s) => s.budgets.adjust(b.id, { amount: -15 }, user.id));
+    expect(successCount(results)).toBe(1);
+    const saved = await db.budget.findUniqueOrThrow({ where: { id: b.id } });
+    expect(saved.allocatedAmount.gte(saved.reservedAmount)).toBe(true);
+    expect(await db.budgetTransaction.count({ where: { budgetId: b.id, type: 'ADJUSTMENT' } })).toBe(1);
+  });
+
+  it('locks department and currency after a PR uses the budget but allows its name to change', async () => {
+    const b = await budget(100);
+    await draft(b.id);
+    const otherDepartment = await db.department.create({ data: { code: code(), name: 'Other Department' } });
+    const s = currentServices();
+    await expect(s.budgets.update(b.id, { currency: 'USD' }, user.id)).rejects.toThrow('cannot change after the budget has been used');
+    await expect(s.budgets.update(b.id, { departmentId: otherDepartment.id }, user.id)).rejects.toThrow('cannot change after the budget has been used');
+    await expect(s.budgets.update(b.id, { name: 'Updated Budget' }, user.id)).resolves.toHaveProperty('name', 'Updated Budget');
+    expect((await db.budget.findUniqueOrThrow({ where: { id: b.id } })).currency).toBe('IDR');
+  });
+
+  it('allows identity changes on an unused zero-allocation budget', async () => {
+    const b = await budget(0);
+    const otherDepartment = await db.department.create({ data: { code: code(), name: 'Unused Budget Department' } });
+    const result = await currentServices().budgets.update(b.id, { departmentId: otherDepartment.id, currency: 'USD' }, user.id);
+    expect(result.departmentId).toBe(otherDepartment.id);
+    expect(result.currency).toBe('USD');
+  });
+
+  it('cannot cancel a budget while its request is submitted concurrently', async () => {
+    const b = await budget(100);
+    const pr = await draft(b.id);
+    const results = await overlap('Budget',
+      (s) => s.budgets.update(b.id, { status: 'CANCELLED' }, user.id),
+      (s) => s.pr.submit(pr.id, {}, user));
+    expect(successCount(results)).toBe(1);
+    const savedBudget = await db.budget.findUniqueOrThrow({ where: { id: b.id } });
+    const savedPr = await db.purchaseRequest.findUniqueOrThrow({ where: { id: pr.id } });
+    expect(savedBudget.status === 'CANCELLED' ? savedPr.status === 'DRAFT' : savedBudget.status === 'ACTIVE' && savedPr.status === 'SUBMITTED').toBe(true);
+  });
+
+  it('rolls back a budget adjustment when audit fails', async () => {
+    const b = await budget(100);
+    const s = currentServices();
+    jest.spyOn(s.audit, 'record').mockRejectedValueOnce(new Error('audit failed'));
+    await expect(s.budgets.adjust(b.id, { amount: 10 }, user.id)).rejects.toThrow('audit failed');
+    expect((await db.budget.findUniqueOrThrow({ where: { id: b.id } })).allocatedAmount).toEqual(new Prisma.Decimal(100));
+    expect(await db.budgetTransaction.count({ where: { budgetId: b.id, type: 'ADJUSTMENT' } })).toBe(0);
+  });
+
+  it('rolls back a budget metadata update when audit fails', async () => {
+    const b = await budget(100);
+    const s = currentServices();
+    jest.spyOn(s.audit, 'record').mockRejectedValueOnce(new Error('audit failed'));
+    await expect(s.budgets.update(b.id, { name: 'Changed' }, user.id)).rejects.toThrow('audit failed');
+    expect((await db.budget.findUniqueOrThrow({ where: { id: b.id } })).name).toBe('Test Budget');
+  });
+
+  it('assigns distinct attempts to concurrent initial ERP syncs', async () => {
+    const po = await order();
+    const results = await overlap('PurchaseOrder',
+      (s) => s.erp.syncPurchaseOrder(po.id, { simulateStatus: 'FAILED' }, user),
+      (s) => s.erp.syncPurchaseOrder(po.id, { simulateStatus: 'FAILED' }, user));
+    expect(successCount(results)).toBe(2);
+    const attempts = await db.erpSyncLog.findMany({ where: { purchaseOrderId: po.id }, orderBy: { attemptNo: 'asc' } });
+    expect(attempts.map((entry) => entry.attemptNo)).toEqual([1, 2]);
+  });
+
+  it('allows just one concurrent retry of a failed ERP sync', async () => {
+    const po = await order();
+    const failed = await currentServices().erp.syncPurchaseOrder(po.id, { simulateStatus: 'FAILED' }, user);
+    const results = await overlap('ErpSyncLog',
+      (s) => s.erp.retryFailedSync(failed.id, { simulateStatus: 'FAILED' }, user),
+      (s) => s.erp.retryFailedSync(failed.id, { simulateStatus: 'FAILED' }, user));
+    expect(successCount(results)).toBe(1);
+    expect(await db.erpSyncLog.count({ where: { previousSyncLogId: failed.id } })).toBe(1);
+    expect((await db.erpSyncLog.findUniqueOrThrow({ where: { id: failed.id } })).status).toBe('RETRYING');
+  });
+
+  it('rolls back an ERP sync log when audit fails', async () => {
+    const po = await order();
+    const s = currentServices();
+    jest.spyOn(s.audit, 'record').mockRejectedValueOnce(new Error('audit failed'));
+    await expect(s.erp.syncPurchaseOrder(po.id, { simulateStatus: 'SUCCESS' }, user)).rejects.toThrow('audit failed');
+    expect(await db.erpSyncLog.count({ where: { purchaseOrderId: po.id } })).toBe(0);
+    expect((await db.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } })).status).toBe('ISSUED');
+  });
+
+  it('rolls back retry status and child log when audit fails', async () => {
+    const po = await order();
+    const s = currentServices();
+    const failed = await s.erp.syncPurchaseOrder(po.id, { simulateStatus: 'FAILED' }, user);
+    jest.spyOn(s.audit, 'record').mockRejectedValueOnce(new Error('audit failed'));
+    await expect(s.erp.retryFailedSync(failed.id, { simulateStatus: 'SUCCESS' }, user)).rejects.toThrow('audit failed');
+    expect((await db.erpSyncLog.findUniqueOrThrow({ where: { id: failed.id } })).status).toBe('FAILED');
+    expect(await db.erpSyncLog.count({ where: { previousSyncLogId: failed.id } })).toBe(0);
+  });
 
   it('keeps draft edits and submission reservation consistent when they overlap', async () => {
     const b = await budget(1000);

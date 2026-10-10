@@ -9,7 +9,11 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
 
   app.setGlobalPrefix('api');
-  app.enableCors();
+  const corsOrigins = (configService.get<string>('CORS_ORIGIN') ?? 'http://localhost:3000')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  app.enableCors({ origin: corsOrigins });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

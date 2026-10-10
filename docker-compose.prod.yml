@@ -1,0 +1,73 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: procureflow-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-procureflow_erp}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-procureflow_erp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ai:
+    build:
+      context: .
+      dockerfile: apps/ai/Dockerfile
+    container_name: procureflow-ai
+    restart: always
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-}
+      - AI_SERVICE_API_KEY=${AI_SERVICE_API_KEY:?Set AI_SERVICE_API_KEY}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-procureflow_erp}
+      - PORT=8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: procureflow-api
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-procureflow_erp}?schema=public
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET}
+      - JWT_EXPIRES_IN=1d
+      - PORT=3001
+      - PYTHON_AI_SERVICE_URL=http://ai:8000
+      - AI_SERVICE_API_KEY=${AI_SERVICE_API_KEY:?Set AI_SERVICE_API_KEY}
+      - FRONTEND_URL=${FRONTEND_URL:?Set FRONTEND_URL}
+      - CORS_ORIGIN=${CORS_ORIGIN:?Set CORS_ORIGIN}
+    ports:
+      - "${API_BIND_IP:-127.0.0.1}:3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ai:
+        condition: service_started
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:?Set NEXT_PUBLIC_API_URL}
+    container_name: procureflow-web
+    restart: always
+    environment:
+      - NODE_ENV=production
+    ports:
+      - "${WEB_BIND_IP:-127.0.0.1}:3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:

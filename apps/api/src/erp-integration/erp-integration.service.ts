@@ -6,6 +6,7 @@ import { AuditTrailsService } from '../audit-trails/audit-trails.service';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { getPagination, toPaginatedResult } from '../common/utils/pagination.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { serializableTransaction } from '../common/utils/serializable-transaction.util';
 
 const erpSyncLogInclude = {
   purchaseOrder: {
@@ -38,15 +39,13 @@ export class ErpIntegrationService {
   async syncPurchaseOrder(purchaseOrderId: string, dto: SyncPurchaseOrderDto | undefined, user: AuthenticatedUser) {
     dto ??= {};
     this.validateSimulatedStatus(dto.simulateStatus);
-    const purchaseOrder = await this.findSyncablePurchaseOrder(purchaseOrderId);
-    const attemptNo = await this.getNextAttemptNo(purchaseOrderId, ErpSyncOperation.CREATE_PO);
-    const mockResponse = this.simulateErpResponse(purchaseOrder.poNumber, dto.simulateStatus);
-
-    if (mockResponse.status === ErpSyncStatus.FAILED) {
-      this.logger.warn(`ERP Sync failed for PO ${purchaseOrder.poNumber}: ${mockResponse.errorMessage}`);
-    }
-
-    const syncLog = await this.prisma.$transaction(async (tx) => {
+    return serializableTransaction(this.prisma, async (tx) => {
+      const purchaseOrder = await this.findSyncablePurchaseOrder(purchaseOrderId, tx);
+      const attemptNo = await this.getNextAttemptNo(purchaseOrderId, ErpSyncOperation.CREATE_PO, tx);
+      const mockResponse = this.simulateErpResponse(purchaseOrder.poNumber, dto.simulateStatus);
+      if (mockResponse.status === ErpSyncStatus.FAILED) {
+        this.logger.warn(`ERP Sync failed for PO ${purchaseOrder.poNumber}: ${mockResponse.errorMessage}`);
+      }
       const createdLog = await tx.erpSyncLog.create({
         data: {
           operation: ErpSyncOperation.CREATE_PO,
@@ -68,56 +67,42 @@ export class ErpIntegrationService {
       if (mockResponse.status === ErpSyncStatus.SUCCESS) {
         await this.markPurchaseOrderSynced(tx, purchaseOrderId, mockResponse.externalId);
       }
-
+      await this.auditTrailsService.record({
+        action: AuditAction.SYNC_ERP,
+        entityType: AuditEntityType.PURCHASE_ORDER,
+        entityId: purchaseOrder.id,
+        entityLabel: purchaseOrder.poNumber,
+        actorId: user.id,
+        after: createdLog,
+        metadata: { operation: ErpSyncOperation.CREATE_PO, status: createdLog.status, attemptNo: createdLog.attemptNo },
+      }, tx);
       return createdLog;
     });
-
-    await this.auditTrailsService.record({
-      action: AuditAction.SYNC_ERP,
-      entityType: AuditEntityType.PURCHASE_ORDER,
-      entityId: purchaseOrder.id,
-      entityLabel: purchaseOrder.poNumber,
-      actorId: user.id,
-      after: syncLog,
-      metadata: {
-        operation: ErpSyncOperation.CREATE_PO,
-        status: syncLog.status,
-        attemptNo: syncLog.attemptNo,
-      },
-    });
-
-    return syncLog;
   }
 
   async retryFailedSync(syncLogId: string, dto: SyncPurchaseOrderDto | undefined, user: AuthenticatedUser) {
     dto ??= {};
     this.validateSimulatedStatus(dto.simulateStatus);
-    const failedLog = await this.prisma.erpSyncLog.findUnique({
-      where: { id: syncLogId },
-      include: erpSyncLogInclude,
-    });
-
-    if (!failedLog) {
-      throw new NotFoundException('ERP sync log not found.');
-    }
-
-    if (failedLog.status !== ErpSyncStatus.FAILED) {
-      throw new BadRequestException('Only failed ERP sync logs can be retried.');
-    }
-
-    if (failedLog.attemptNo >= failedLog.maxAttempts) {
-      throw new BadRequestException('ERP sync log has reached the maximum retry attempts.');
-    }
-
-    const purchaseOrder = await this.findSyncablePurchaseOrder(failedLog.purchaseOrderId);
-    const retryAttemptNo = failedLog.attemptNo + 1;
-    const mockResponse = this.simulateErpResponse(purchaseOrder.poNumber, dto.simulateStatus);
-
-    if (mockResponse.status === ErpSyncStatus.FAILED) {
-      this.logger.warn(`ERP Sync Retry failed for PO ${purchaseOrder.poNumber}: ${mockResponse.errorMessage}`);
-    }
-
-    const retryLog = await this.prisma.$transaction(async (tx) => {
+    return serializableTransaction(this.prisma, async (tx) => {
+      const failedLog = await tx.erpSyncLog.findUnique({ where: { id: syncLogId }, include: erpSyncLogInclude });
+      if (!failedLog) throw new NotFoundException('ERP sync log not found.');
+      if (failedLog.status !== ErpSyncStatus.FAILED) {
+        throw new BadRequestException('Only failed ERP sync logs can be retried.');
+      }
+      if (failedLog.attemptNo >= failedLog.maxAttempts) {
+        throw new BadRequestException('ERP sync log has reached the maximum retry attempts.');
+      }
+      const existingRetry = await tx.erpSyncLog.findFirst({ where: { previousSyncLogId: failedLog.id } });
+      if (existingRetry) throw new BadRequestException('ERP sync log has already been retried.');
+      const purchaseOrder = await this.findSyncablePurchaseOrder(failedLog.purchaseOrderId, tx);
+      const retryAttemptNo = await this.getNextAttemptNo(purchaseOrder.id, failedLog.operation, tx);
+      if (retryAttemptNo > failedLog.maxAttempts) {
+        throw new BadRequestException('ERP sync log has reached the maximum retry attempts.');
+      }
+      const mockResponse = this.simulateErpResponse(purchaseOrder.poNumber, dto.simulateStatus);
+      if (mockResponse.status === ErpSyncStatus.FAILED) {
+        this.logger.warn(`ERP Sync Retry failed for PO ${purchaseOrder.poNumber}: ${mockResponse.errorMessage}`);
+      }
       await tx.erpSyncLog.update({
         where: { id: failedLog.id },
         data: { status: ErpSyncStatus.RETRYING },
@@ -145,25 +130,17 @@ export class ErpIntegrationService {
       if (mockResponse.status === ErpSyncStatus.SUCCESS) {
         await this.markPurchaseOrderSynced(tx, purchaseOrder.id, mockResponse.externalId);
       }
-
+      await this.auditTrailsService.record({
+        action: AuditAction.RETRY_ERP_SYNC,
+        entityType: AuditEntityType.ERP_SYNC_LOG,
+        entityId: createdRetryLog.id,
+        entityLabel: purchaseOrder.poNumber,
+        actorId: user.id,
+        after: createdRetryLog,
+        metadata: { previousSyncLogId: failedLog.id, status: createdRetryLog.status, attemptNo: createdRetryLog.attemptNo },
+      }, tx);
       return createdRetryLog;
     });
-
-    await this.auditTrailsService.record({
-      action: AuditAction.RETRY_ERP_SYNC,
-      entityType: AuditEntityType.ERP_SYNC_LOG,
-      entityId: retryLog.id,
-      entityLabel: purchaseOrder.poNumber,
-      actorId: user.id,
-      after: retryLog,
-      metadata: {
-        previousSyncLogId: failedLog.id,
-        status: retryLog.status,
-        attemptNo: retryLog.attemptNo,
-      },
-    });
-
-    return retryLog;
   }
 
   async findLogs(query: ErpSyncLogQueryDto) {
@@ -224,8 +201,8 @@ export class ErpIntegrationService {
     }
   }
 
-  private async findSyncablePurchaseOrder(id: string) {
-    const purchaseOrder = await this.prisma.purchaseOrder.findFirst({
+  private async findSyncablePurchaseOrder(id: string, tx: Prisma.TransactionClient = this.prisma) {
+    const purchaseOrder = await tx.purchaseOrder.findFirst({
       where: { id, deletedAt: null },
       include: {
         supplier: { select: { code: true, name: true } },
@@ -253,8 +230,8 @@ export class ErpIntegrationService {
     return purchaseOrder;
   }
 
-  private async getNextAttemptNo(purchaseOrderId: string, operation: ErpSyncOperation) {
-    const aggregate = await this.prisma.erpSyncLog.aggregate({
+  private async getNextAttemptNo(purchaseOrderId: string, operation: ErpSyncOperation, tx: Prisma.TransactionClient = this.prisma) {
+    const aggregate = await tx.erpSyncLog.aggregate({
       where: { purchaseOrderId, operation },
       _max: { attemptNo: true },
     });
